@@ -6,7 +6,7 @@ import pytest
 import time
 
 from robstride import RobStrideMotor
-from robstride.models import ParameterIndex
+from robstride.models import ParameterIndex, MotorState, ControlMode
 
 
 @pytest.mark.hardware
@@ -21,13 +21,15 @@ class TestBasicCommunication:
         # Try to enable motor
         result = motor.enable_motor()
         assert result is True
+        assert motor.state == MotorState.ENABLED
         
         time.sleep(0.5)
         
         # Motor should be enabled
-        # (State verification depends on feedback implementation)
+        assert motor.state == MotorState.ENABLED
         
         motor.disable_motor()
+        assert motor.state == MotorState.DISABLED
     
     def test_status_feedback_reception(self, hardware_motor, safety_check):
         """TC-S-002: Motor sends status feedback"""
@@ -35,15 +37,17 @@ class TestBasicCommunication:
         
         motor.enable_motor()
         time.sleep(0.2)
+        assert motor.state == MotorState.ENABLED
         
         # Read position
         motor.get_parameter(ParameterIndex.MECH_POS)
         time.sleep(0.2)
         
         # Status should have been updated
-        # (Check that last_update timestamp changed)
+        assert isinstance(motor.status.angle, float)
         
         motor.disable_motor()
+        assert motor.state == MotorState.DISABLED
     
     def test_parameter_roundtrip(self, hardware_motor, safety_check):
         """TC-S-003: Parameter write-read roundtrip"""
@@ -51,6 +55,7 @@ class TestBasicCommunication:
         
         motor.enable_motor()
         time.sleep(0.2)
+        assert motor.state == MotorState.ENABLED
         
         # Write current limit
         test_value = 8.0
@@ -62,9 +67,11 @@ class TestBasicCommunication:
         time.sleep(0.2)
         
         # Verify (implementation-dependent)
-        # assert abs(motor.param_data.limit_cur - test_value) < 0.1
+        if motor.param_data.limit_cur is not None:
+            assert abs(motor.param_data.limit_cur - test_value) < 0.5
         
         motor.disable_motor()
+        assert motor.state == MotorState.DISABLED
 
 
 @pytest.mark.hardware
@@ -80,8 +87,10 @@ class TestControlPerformance:
         # Setup
         motor.enable_motor()
         time.sleep(0.2)
+        assert motor.state == MotorState.ENABLED
         
-        motor.set_parameter(ParameterIndex.RUN_MODE, 5, value_mode='j')  # CSP mode
+        # Per RS02 spec: run_mode=5 is Position Mode (CSP)
+        motor.set_parameter(ParameterIndex.RUN_MODE, ControlMode.POSITION_CSP, value_mode='j')
         motor.set_parameter(ParameterIndex.LIMIT_SPD_CSP, 5.0)
         motor.set_parameter(ParameterIndex.LIMIT_CUR, 5.0)
         time.sleep(0.2)

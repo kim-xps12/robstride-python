@@ -18,12 +18,15 @@ class TestMotorStatus:
         """TC-U-M-001: MotorStatus initializes with default values"""
         status = MotorStatus()
         
+        assert status.device_id is None
+        assert status.device_uid is None
         assert status.angle == 0.0
         assert status.speed == 0.0
         assert status.torque == 0.0
         assert status.temperature == 0.0
         assert status.pattern == 0
         assert status.error_code == 0
+        assert status.warning_code == 0
     
     def test_motor_status_has_error_property(self):
         """TC-U-M-002: has_error property correctly detects errors"""
@@ -51,6 +54,26 @@ class TestMotorStatus:
         
         status.pattern = 3
         assert status.is_running is True
+    
+    def test_motor_status_get_error_names(self):
+        """TC-U-M-004: get_error_names returns correct error list"""
+        status = MotorStatus()
+        
+        # No errors
+        status.error_code = 0
+        error_names = status.get_error_names()
+        assert error_names == []
+        
+        # Single error
+        status.error_code = ErrorFlag.OVER_TEMPERATURE
+        error_names = status.get_error_names()
+        assert len(error_names) == 1
+        assert any('TEMPERATURE' in name.upper() or 'TEMP' in name.upper() for name in error_names)
+        
+        # Multiple errors
+        status.error_code = ErrorFlag.OVER_TEMPERATURE | ErrorFlag.OVER_CURRENT
+        error_names = status.get_error_names()
+        assert len(error_names) == 2
     
     def test_motor_status_str_representation(self):
         """TC-U-M-005: String representation is informative"""
@@ -101,7 +124,7 @@ class TestEnumerations:
     """Tests for enum classes"""
     
     def test_control_mode_values(self):
-        """TC-U-E-001: ControlMode enum has correct values"""
+        """TC-U-E-001: ControlMode enum has correct values per RS02 specification"""
         assert ControlMode.MOTION_CONTROL == 0
         assert ControlMode.POSITION_PP == 1
         assert ControlMode.SPEED == 2
@@ -128,8 +151,16 @@ class TestEnumerations:
         assert combined & ErrorFlag.OVER_CURRENT
         assert not (combined & ErrorFlag.UNDER_VOLTAGE)
     
+    def test_motor_state_values(self):
+        """TC-U-E-004: MotorState enum has correct values"""
+        assert MotorState.UNINITIALIZED == 0
+        assert MotorState.DISABLED == 1
+        assert MotorState.ENABLED == 2
+        assert MotorState.RUNNING == 3
+        assert MotorState.FAULT == 4
+    
     def test_motor_pattern_values(self):
-        """TC-U-E-004: MotorPattern enum has correct values"""
+        """TC-U-E-005: MotorPattern enum has correct values"""
         assert MotorPattern.TORQUE == 0
         assert MotorPattern.POSITION == 1
         assert MotorPattern.SPEED == 2

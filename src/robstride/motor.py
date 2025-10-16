@@ -293,6 +293,32 @@ class RobStrideMotor:
             self.logger.log_info(self.motor_id, "Parameters saved to FLASH")
         return success
     
+    def set_auto_report(self, enable: bool = True) -> bool:
+        """
+        Enable or disable automatic status reporting
+        
+        Args:
+            enable: True to enable auto-reporting, False to disable
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            RuntimeError: If not in Private protocol mode
+            
+        Note:
+            When enabled, motor sends status updates at regular intervals (default 10ms).
+            Interval can be changed via EPSCAN_TIME parameter (0x7026).
+        """
+        if self.protocol_mode != ProtocolMode.PRIVATE:
+            raise RuntimeError("Auto-report only available in Private protocol")
+        
+        success = self.private_handler.send_set_auto_report(enable)
+        if success:
+            status_str = "enabled" if enable else "disabled"
+            self.logger.log_info(self.motor_id, f"Auto-report {status_str}")
+        return success
+    
     # === Motion Control ===
     
     def send_motion_control(self, torque: float = 0.0, angle: float = 0.0, 
@@ -320,7 +346,16 @@ class RobStrideMotor:
             kp=kp,
             kd=kd
         )
-        
+        # Ensure motor is in Motion Control run_mode (0) before sending command
+        try:
+            # write run_mode as uint8 (value_mode='j')
+            self.set_parameter(ParameterIndex.RUN_MODE, ControlMode.MOTION_CONTROL, value_mode='j')
+            # small delay to allow motor to switch mode
+            time.sleep(0.02)
+        except Exception:
+            # If setting run_mode fails, proceed to send command anyway
+            pass
+
         success = self.private_handler.send_motion_control(cmd)
         if success:
             self.state = MotorState.RUNNING

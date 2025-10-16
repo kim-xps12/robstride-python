@@ -6,7 +6,7 @@ Demonstrates position control using PP (Point-to-Point) mode.
 
 import can
 import time
-from robstride_old import RobStrideMotor, ProtocolMode
+from robstride import RobStrideMotor, ProtocolMode
 
 def main():
     # Initialize CAN interface

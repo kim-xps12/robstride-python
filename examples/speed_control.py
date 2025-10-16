@@ -6,7 +6,7 @@ Demonstrates speed control mode with varying speeds.
 
 import can
 import time
-from robstride_old import RobStrideMotor, ProtocolMode
+from robstride import RobStrideMotor, ProtocolMode
 
 def main():
     # Initialize motor

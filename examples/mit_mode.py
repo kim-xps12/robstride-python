@@ -7,7 +7,7 @@ Demonstrates MIT protocol composite control.
 import can
 import time
 import math
-from robstride_old import RobStrideMotor, ProtocolMode
+from robstride import RobStrideMotor, ProtocolMode
 
 def main():
     # Initialize motor in MIT mode

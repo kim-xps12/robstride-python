@@ -6,7 +6,7 @@ Demonstrates coordinated control of multiple motors.
 
 import can
 import time
-from robstride_old import RobStrideMotor, ProtocolMode
+from robstride import RobStrideMotor, ProtocolMode
 
 def main():
     # Initialize CAN bus

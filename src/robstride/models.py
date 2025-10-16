@@ -21,13 +21,22 @@ from typing import Dict, Tuple, Optional
 # ============================================================================
 
 class ControlMode(IntEnum):
-    """Control mode enumeration"""
-    MOTION_CONTROL = 0  # Composite motion control (torque/position/speed)
-    POSITION_PP = 1     # PP position control
-    SPEED = 2           # Speed control
-    CURRENT = 3         # Current control
-    SET_ZERO = 4        # Zero position setting mode
-    POSITION_CSP = 5    # CSP position control
+    """
+    Control mode enumeration (RS02 run_mode 0x7005)
+    
+    Per RS02 specification:
+    0: モーション制御モード (Motion Control Mode)
+    1: 位置制御モード（PP） (Position Control Mode - PP)
+    2: 速度制御モード (Speed Control Mode)
+    3: 電流制御モード (Current Control Mode)
+    5: 位置モード（CSP） (Position Mode - CSP)
+    """
+    MOTION_CONTROL = 0        # Motion control mode (composite control with torque/position/speed/kp/kd)
+    POSITION_PP = 1           # Position control mode (PP - Point to Point)
+    SPEED = 2                 # Speed control mode
+    CURRENT = 3               # Current control mode
+    SET_ZERO = 4              # Zero position setting mode (vendor extension, not in RS02 spec)
+    POSITION_CSP = 5          # Position mode (CSP - Cyclic Synchronous Position)
 
 
 class ProtocolMode(IntEnum):
@@ -64,16 +73,39 @@ class BaudRate(IntEnum):
 
 
 class ErrorFlag(IntFlag):
-    """Error flag bitmap (8-bit)"""
+    """
+    Error flags extracted from Communication Type 0x02 (bits 21-16 of the ExtID data field).
+    
+    Each flag is normalised to a compact 6-bit bitmap, where bit0 corresponds to RS02 bit16.
+    """
     NONE = 0x00
-    OVER_TEMPERATURE = 0x01  # Bit 0: Over temperature
-    OVER_CURRENT = 0x02      # Bit 1: Over current
-    OVER_VOLTAGE = 0x04      # Bit 2: Over voltage
-    UNDER_VOLTAGE = 0x08     # Bit 3: Under voltage
-    ENCODER_ERROR = 0x10     # Bit 4: Encoder error
-    PHASE_ERROR = 0x20       # Bit 5: Phase current unbalance
-    RESERVED = 0x40          # Bit 6: Reserved
-    CAN_TIMEOUT = 0x80       # Bit 7: CAN timeout
+    UNDER_VOLTAGE = 1 << 0      # RS02 bit16
+    OVER_CURRENT = 1 << 1       # RS02 bit17
+    OVER_TEMPERATURE = 1 << 2   # RS02 bit18
+    ENCODER_FAULT = 1 << 3      # RS02 bit19
+    OVER_INTEGRATION = 1 << 4   # RS02 bit20
+    UNCALIBRATED = 1 << 5       # RS02 bit21
+
+
+class FaultFlag(IntFlag):
+    """
+    Fault flags reported by Communication Type 0x15 payload (32-bit fault field).
+    """
+    NONE = 0x00000000
+    MOTOR_OVER_TEMP = 1 << 10         # Motor over-temperature (135°C)
+    DRIVER_CHIP_FAULT = 1 << 11       # Driver chip fault
+    UNDER_VOLTAGE = 1 << 12           # Under-voltage fault
+    OVER_TEMPERATURE = 1 << 13        # Controller over-temperature fault
+    OVER_INTEGRATION = 1 << 14        # Over-integration fault
+    ENCODER_UNCALIBRATED = 1 << 17    # Magnetic encoder uncalibrated
+
+
+class WarningFlag(IntFlag):
+    """
+    Warning flags reported by Communication Type 0x15 payload (32-bit warning field).
+    """
+    NONE = 0x00000000
+    MOTOR_OVER_TEMP = 1 << 0          # Motor over-temperature warning (125°C)
 
 
 class MotorPattern(IntEnum):
@@ -107,17 +139,21 @@ class MotorState(IntEnum):
 @dataclass
 class MotorStatus:
     """Motor status information"""
-    angle: float = 0.0          # Angle [rad], range: -12.5 ~ 12.5
+    device_id: Optional[int] = None       # Motor CAN ID returned by GET_ID
+    device_uid: Optional[int] = None      # 64-bit MCU unique identifier
+    angle: float = 0.0          # Angle [rad], range: -12.57 ~ 12.57
     speed: float = 0.0          # Speed [rad/s], range: -44 ~ 44
     torque: float = 0.0         # Torque [Nm], range: -17 ~ 17
     temperature: float = 0.0    # Temperature [°C], range: 0 ~ 200
     pattern: int = 0            # Control pattern (0-3)
-    error_code: int = 0         # Error code (8-bit bitmap)
+    error_code: int = 0         # Type 0x02 error flags (normalised 6-bit bitmap)
+    fault_code: int = 0         # Type 0x15 fault bitmap
+    warning_code: int = 0       # Type 0x15 warning bitmap
     
     @property
     def has_error(self) -> bool:
         """Check if any error flag is set"""
-        return self.error_code != 0
+        return (self.error_code != 0) or (self.fault_code != 0)
     
     @property
     def is_running(self) -> bool:
@@ -125,22 +161,31 @@ class MotorStatus:
         return self.pattern > 0
     
     def get_error_names(self) -> list[str]:
-        """Get list of error flag names"""
+        """Get list of error flag names across Type0x02 and Type0x15 feedback"""
         errors = []
-        if self.error_code & ErrorFlag.OVER_TEMPERATURE:
-            errors.append("OVER_TEMPERATURE")
-        if self.error_code & ErrorFlag.OVER_CURRENT:
-            errors.append("OVER_CURRENT")
-        if self.error_code & ErrorFlag.OVER_VOLTAGE:
-            errors.append("OVER_VOLTAGE")
-        if self.error_code & ErrorFlag.UNDER_VOLTAGE:
-            errors.append("UNDER_VOLTAGE")
-        if self.error_code & ErrorFlag.ENCODER_ERROR:
-            errors.append("ENCODER_ERROR")
-        if self.error_code & ErrorFlag.PHASE_ERROR:
-            errors.append("PHASE_ERROR")
-        if self.error_code & ErrorFlag.CAN_TIMEOUT:
-            errors.append("CAN_TIMEOUT")
+        
+        error_flags = ErrorFlag(self.error_code)
+        for flag in ErrorFlag:
+            if flag is ErrorFlag.NONE:
+                continue
+            if error_flags & flag and flag.name not in errors:
+                errors.append(flag.name)
+        
+        fault_flags = FaultFlag(self.fault_code)
+        for flag in FaultFlag:
+            if flag is FaultFlag.NONE:
+                continue
+            if fault_flags & flag and flag.name not in errors:
+                errors.append(flag.name)
+        
+        warning_flags = WarningFlag(self.warning_code)
+        for flag in WarningFlag:
+            if flag is WarningFlag.NONE:
+                continue
+            name = f"WARNING_{flag.name}"
+            if warning_flags & flag and name not in errors:
+                errors.append(name)
+        
         return errors
     
     def __str__(self) -> str:
@@ -159,21 +204,30 @@ class ParameterData:
     run_mode: float = 0.0
     iq_ref: float = 0.0
     spd_ref: float = 0.0
-    limit_torque: float = 12.0
+    limit_spd: float = 44.0          # Speed mode speed limit (0x7008)
+    limit_torque: float = 12.0       # Torque limit (0x700F)
     cur_kp: float = 0.0
     cur_ki: float = 0.0
     cur_filt_gain: float = 0.0
     loc_ref: float = 0.0
-    limit_spd: float = 44.0
+    limit_spd_csp: float = 44.0      # CSP mode speed limit (0x7017) - alias for limit_spd
     limit_cur: float = 23.0
     mech_pos: float = 0.0
     iqf: float = 0.0
     mech_vel: float = 0.0
     vbus: float = 0.0
+    loc_kp: float = 0.0              # Position control Kp (0x701E)
+    spd_kp: float = 0.0              # Speed control Kp (0x701F)
+    spd_ki: float = 0.0              # Speed control Ki (0x7020)
+    spd_filt_gain: float = 0.0       # Speed loop filter gain (0x7021)
+    acc_rad: float = 0.0             # Position mode acceleration (0x7022)
     rotation: int = 0
-    accel_spd: float = 0.0
-    limit_spd_pp: float = 30.0
-    acceleration: float = 0.0
+    accel_spd: float = 0.0           # Legacy field, may overlap with acc_rad
+    limit_spd_pp: float = 30.0       # PP mode max speed (0x7024)
+    acceleration: float = 0.0        # PP mode acceleration (0x7025)
+    epscan_time: int = 1             # Auto-report time setting (0x7026)
+    can_timeout: int = 30            # CAN timeout in ms (0x7028)
+    zero_sta: int = 0                # Zero point status (0x7029)
     
     def __str__(self) -> str:
         return (f"ParameterData(mode={self.run_mode}, "
@@ -186,9 +240,9 @@ class ParameterData:
 @dataclass
 class MotionControlCommand:
     """Motion control command for Private protocol Type 0x01"""
-    torque: float = 0.0    # Torque [Nm], range: -4 ~ 4
-    angle: float = 0.0     # Angle [rad], range: -12.5 ~ 12.5
-    speed: float = 0.0     # Speed [rad/s], range: -30 ~ 30
+    torque: float = 0.0    # Torque [Nm], range: -17 ~ 17
+    angle: float = 0.0     # Angle [rad], range: -12.57 ~ 12.57
+    speed: float = 0.0     # Speed [rad/s], range: -44 ~ 44
     kp: float = 0.0        # Position gain, range: 0 ~ 500
     kd: float = 0.0        # Damping gain, range: 0 ~ 5
 
@@ -196,11 +250,11 @@ class MotionControlCommand:
 @dataclass
 class MITCommand:
     """MIT protocol command"""
-    position: float = 0.0   # Position [rad], range: -12.5 ~ 12.5
-    velocity: float = 0.0   # Velocity [rad/s], range: -30 ~ 30
+    position: float = 0.0   # Position [rad], range: -12.57 ~ 12.57
+    velocity: float = 0.0   # Velocity [rad/s], range: -44 ~ 44
     kp: float = 0.0         # Position gain, range: 0 ~ 500
     kd: float = 0.0         # Damping gain, range: 0 ~ 5
-    torque: float = 0.0     # Feedforward torque [Nm], range: -18 ~ 18
+    torque: float = 0.0     # Feedforward torque [Nm], range: -17 ~ 17
 
 
 @dataclass
@@ -243,19 +297,23 @@ PARAMETER_MAP: Dict[int, ParameterSpec] = {
                          'Control mode (0=motion, 1=position_pp, 2=speed, 3=current, 4=set_zero, 5=csp)', 0),
     0x7006: ParameterSpec(0x7006, 'iq_ref', 'float32', 'RW', -23.0, 23.0, 'A', 
                          'Current reference (current mode)', 0.0),
-    0x700A: ParameterSpec(0x700A, 'spd_ref', 'float32', 'RW', -30.0, 30.0, 'rad/s', 
+    0x7008: ParameterSpec(0x7008, 'limit_spd', 'float32', 'RW', -44.0, 44.0, 'rad/s', 
+                         'Speed limit (speed mode)', 44.0),
+    0x700A: ParameterSpec(0x700A, 'spd_ref', 'float32', 'RW', -44.0, 44.0, 'rad/s', 
                          'Speed reference (speed mode)', 0.0),
     0x700B: ParameterSpec(0x700B, 'limit_torque', 'float32', 'RW', 0.0, 12.0, 'Nm', 
                          'Torque limit', 12.0),
+    0x700F: ParameterSpec(0x700F, 'limit_torque_alt', 'float32', 'RW', 0.0, 17.0, 'Nm', 
+                         'Torque limit (alternative register)', 17.0),
     0x7010: ParameterSpec(0x7010, 'cur_kp', 'float32', 'RW', 0.0, 10.0, '', 
-                         'Current control Kp gain', 0.0),
+                         'Current control Kp gain', 0.17),
     0x7011: ParameterSpec(0x7011, 'cur_ki', 'float32', 'RW', 0.0, 1.0, '', 
-                         'Current control Ki gain', 0.0),
+                         'Current control Ki gain', 0.012),
     0x7014: ParameterSpec(0x7014, 'cur_filt_gain', 'float32', 'RW', 0.0, 1.0, '', 
-                         'Current filter gain', 0.0),
+                         'Current filter gain', 0.1),
     0x7016: ParameterSpec(0x7016, 'loc_ref', 'float32', 'RW', float('-inf'), float('inf'), 'rad', 
                          'Position reference (position mode)', 0.0),
-    0x7017: ParameterSpec(0x7017, 'limit_spd', 'float32', 'RW', 0.0, 44.0, 'rad/s', 
+    0x7017: ParameterSpec(0x7017, 'limit_spd_csp', 'float32', 'RW', -44.0, 44.0, 'rad/s', 
                          'Speed limit (CSP mode)', 44.0),
     0x7018: ParameterSpec(0x7018, 'limit_cur', 'float32', 'RW', 0.0, 23.0, 'A', 
                          'Current limit', 23.0),
@@ -263,18 +321,32 @@ PARAMETER_MAP: Dict[int, ParameterSpec] = {
                          'Mechanical position (cumulative)', None),
     0x701A: ParameterSpec(0x701A, 'iqf', 'float32', 'R', -23.0, 23.0, 'A', 
                          'Filtered current (measured)', None),
-    0x701B: ParameterSpec(0x701B, 'mech_vel', 'float32', 'R', -30.0, 30.0, 'rad/s', 
+    0x701B: ParameterSpec(0x701B, 'mech_vel', 'float32', 'R', -44.0, 44.0, 'rad/s', 
                          'Mechanical velocity (measured)', None),
     0x701C: ParameterSpec(0x701C, 'vbus', 'float32', 'R', 0.0, 60.0, 'V', 
                          'Bus voltage (measured)', None),
     0x701D: ParameterSpec(0x701D, 'rotation', 'int16', 'R', -32768, 32767, 'rounds', 
                          'Rotation count', None),
-    0x7022: ParameterSpec(0x7022, 'accel_spd', 'float32', 'RW', 0.0, 100.0, 'rad/s²', 
-                         'Acceleration (speed mode)', 0.0),
-    0x7024: ParameterSpec(0x7024, 'limit_spd_pp', 'float32', 'RW', 0.0, 30.0, 'rad/s', 
-                         'Speed limit (PP position mode)', 30.0),
-    0x7025: ParameterSpec(0x7025, 'acceleration', 'float32', 'RW', 0.0, 100.0, 'rad/s²', 
-                         'Acceleration (position mode)', 0.0),
+    0x701E: ParameterSpec(0x701E, 'loc_kp', 'float32', 'RW', 0.0, 500.0, '', 
+                         'Position control Kp gain', 40.0),
+    0x701F: ParameterSpec(0x701F, 'spd_kp', 'float32', 'RW', 0.0, 100.0, '', 
+                         'Speed control Kp gain', 16.0),
+    0x7020: ParameterSpec(0x7020, 'spd_ki', 'float32', 'RW', 0.0, 10.0, '', 
+                         'Speed control Ki gain', 0.02),
+    0x7021: ParameterSpec(0x7021, 'spd_filt_gain', 'float32', 'RW', 0.0, 1.0, '', 
+                         'Speed filter gain', 0.1),
+    0x7022: ParameterSpec(0x7022, 'acc_rad', 'float32', 'RW', 0.0, 100.0, 'rad/s²', 
+                         'Acceleration (position mode)', 20.0),
+    0x7024: ParameterSpec(0x7024, 'vel_max', 'float32', 'RW', 0.0, 44.0, 'rad/s', 
+                         'Maximum speed (PP position mode)', 10.0),
+    0x7025: ParameterSpec(0x7025, 'acc_set', 'float32', 'RW', 0.0, 100.0, 'rad/s²', 
+                         'Acceleration setting (PP position mode)', 10.0),
+    0x7026: ParameterSpec(0x7026, 'EPScan_time', 'uint16', 'RW', 1, 1500, '', 
+                         'Auto-report interval (1 unit = 10ms, max +15ms)', 1),
+    0x7028: ParameterSpec(0x7028, 'canTimeout', 'uint32', 'RW', 0, 20000, 'ms', 
+                         'CAN communication timeout', 30),
+    0x7029: ParameterSpec(0x7029, 'zero_sta', 'uint8', 'RW', 0, 1, '', 
+                         'Zero position status (0=-2π, 1=+π)', 0),
 }
 
 
@@ -316,31 +388,54 @@ def is_writable(index: int) -> bool:
 
 
 class ParameterIndex:
-    """Parameter index constants"""
+    """Parameter index constants for all supported parameters"""
+    # Control mode and basic settings
     RUN_MODE = 0x7005
     IQ_REF = 0x7006
+    LIMIT_SPD = 0x7008           # Speed mode speed limit
     SPD_REF = 0x700A
     LIMIT_TORQUE = 0x700B
+    LIMIT_TORQUE_ALT = 0x700F    # Alternative torque limit register
+    
+    # Current control parameters
     CUR_KP = 0x7010
     CUR_KI = 0x7011
     CUR_FILT_GAIN = 0x7014
+    
+    # Position and speed control
     LOC_REF = 0x7016
-    LIMIT_SPD = 0x7017
+    LIMIT_SPD_CSP = 0x7017       # CSP mode speed limit
     LIMIT_CUR = 0x7018
+    
+    # Measured values (read-only)
     MECH_POS = 0x7019
     IQF = 0x701A
     MECH_VEL = 0x701B
     VBUS = 0x701C
     ROTATION = 0x701D
-    ACCEL_SPD = 0x7022
-    LIMIT_SPD_PP = 0x7024
-    ACCELERATION = 0x7025
+    
+    # Position and speed loop gains
+    LOC_KP = 0x701E
+    SPD_KP = 0x701F
+    SPD_KI = 0x7020
+    SPD_FILT_GAIN = 0x7021
+    
+    # Motion profile parameters
+    ACC_RAD = 0x7022             # Position mode acceleration
+    VEL_MAX = 0x7024             # PP mode maximum speed
+    ACC_SET = 0x7025             # PP mode acceleration setting
+    
+    # System parameters
+    EPSCAN_TIME = 0x7026         # Auto-report interval
+    CAN_TIMEOUT = 0x7028         # CAN communication timeout
+    ZERO_STA = 0x7029            # Zero position status
 
 
 __all__ = [
     # Enums
     'ControlMode', 'ProtocolMode', 'CommunicationType', 'BaudRate',
-    'ErrorFlag', 'MotorPattern', 'MITMotorType', 'MotorState',
+    'ErrorFlag', 'FaultFlag', 'WarningFlag',
+    'MotorPattern', 'MITMotorType', 'MotorState',
     # Data structures
     'MotorStatus', 'ParameterData', 'MotionControlCommand', 'MITCommand', 'CANMessage',
     # Parameter mapping

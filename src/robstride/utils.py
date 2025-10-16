@@ -16,7 +16,7 @@ import math
 import time
 from typing import Optional
 from pathlib import Path
-from .models import ErrorFlag
+from .models import ErrorFlag, FaultFlag, WarningFlag
 
 
 # ============================================================================
@@ -73,32 +73,51 @@ class ErrorHandler:
         """
         return self.motor.status.has_error
     
-    def get_error_description(self, error_code: int) -> str:
+    def get_error_description(self, error_code: int, fault_code: int = 0, warning_code: int = 0) -> str:
         """
         Get human-readable error description
         
         Args:
-            error_code: 8-bit error code
+            error_code: Error code bitmap
+            fault_code: Fault bitmap from Type 0x15 payload
+            warning_code: Warning bitmap from Type 0x15 payload
             
         Returns:
             Error description string
         """
         errors = []
         
-        if error_code & ErrorFlag.OVER_TEMPERATURE:
+        error_flags = ErrorFlag(error_code)
+        if error_flags & ErrorFlag.OVER_TEMPERATURE and "Over-temperature (>80°C)" not in errors:
             errors.append("Over-temperature (>80°C)")
-        if error_code & ErrorFlag.OVER_CURRENT:
+        if error_flags & ErrorFlag.OVER_CURRENT and "Over-current (>23A)" not in errors:
             errors.append("Over-current (>23A)")
-        if error_code & ErrorFlag.OVER_VOLTAGE:
-            errors.append("Over-voltage (>50V)")
-        if error_code & ErrorFlag.UNDER_VOLTAGE:
+        if error_flags & ErrorFlag.UNDER_VOLTAGE and "Under-voltage (<12V)" not in errors:
             errors.append("Under-voltage (<12V)")
-        if error_code & ErrorFlag.ENCODER_ERROR:
-            errors.append("Encoder communication error")
-        if error_code & ErrorFlag.PHASE_ERROR:
-            errors.append("Phase current unbalance")
-        if error_code & ErrorFlag.CAN_TIMEOUT:
-            errors.append("CAN command timeout (>500ms)")
+        if error_flags & ErrorFlag.ENCODER_FAULT and "Encoder fault" not in errors:
+            errors.append("Encoder fault")
+        if error_flags & ErrorFlag.OVER_INTEGRATION and "Over-integration fault" not in errors:
+            errors.append("Over-integration fault")
+        if error_flags & ErrorFlag.UNCALIBRATED and "Uncalibrated encoder" not in errors:
+            errors.append("Uncalibrated encoder")
+        
+        fault_flags = FaultFlag(fault_code)
+        if fault_flags & FaultFlag.MOTOR_OVER_TEMP and "Motor over-temperature fault (>135°C)" not in errors:
+            errors.append("Motor over-temperature fault (>135°C)")
+        if fault_flags & FaultFlag.DRIVER_CHIP_FAULT and "Driver chip fault" not in errors:
+            errors.append("Driver chip fault")
+        if fault_flags & FaultFlag.UNDER_VOLTAGE and "Under-voltage fault (<12V)" not in errors:
+            errors.append("Under-voltage fault (<12V)")
+        if fault_flags & FaultFlag.OVER_TEMPERATURE and "Controller over-temperature fault" not in errors:
+            errors.append("Controller over-temperature fault")
+        if fault_flags & FaultFlag.OVER_INTEGRATION and "Over-integration fault" not in errors:
+            errors.append("Over-integration fault")
+        if fault_flags & FaultFlag.ENCODER_UNCALIBRATED and "Encoder uncalibrated" not in errors:
+            errors.append("Encoder uncalibrated")
+        
+        warning_flags = WarningFlag(warning_code)
+        if warning_flags & WarningFlag.MOTOR_OVER_TEMP and "Warning: Motor over-temperature (>125°C)" not in errors:
+            errors.append("Warning: Motor over-temperature (>125°C)")
         
         if not errors:
             return "No errors"
@@ -110,30 +129,37 @@ class ErrorHandler:
         Handle motor error with appropriate recovery strategy
         
         Args:
-            error_code: 8-bit error code
+            error_code: Error code bitmap
             
         Returns:
             True if recovery successful
         """
-        if error_code == 0:
+        fault_flags = FaultFlag(self.motor.status.fault_code)
+        warning_flags = WarningFlag(self.motor.status.warning_code)
+        
+        if error_code == 0 and fault_flags == FaultFlag.NONE:
+            if warning_flags != WarningFlag.NONE:
+                self.logger.warning("Motor warning detected: %s",
+                                     self.get_error_description(0, 0, warning_flags.value))
             return True
         
-        self.logger.error(f"Motor error detected: {self.get_error_description(error_code)}")
+        description = self.get_error_description(error_code, fault_flags.value, warning_flags.value)
+        self.logger.error(f"Motor error detected: {description}")
+        
+        error_flags = ErrorFlag(error_code)
         
         # Check critical errors
-        if error_code & ErrorFlag.OVER_TEMPERATURE:
+        if (error_flags & ErrorFlag.OVER_TEMPERATURE) or \
+           (fault_flags & (FaultFlag.OVER_TEMPERATURE | FaultFlag.MOTOR_OVER_TEMP)):
             return self._recover_over_temperature()
         
-        if error_code & ErrorFlag.OVER_CURRENT:
+        if error_flags & ErrorFlag.OVER_CURRENT:
             return self._recover_over_current()
         
-        if error_code & ErrorFlag.OVER_VOLTAGE:
-            return self._recover_over_voltage()
-        
-        if error_code & ErrorFlag.UNDER_VOLTAGE:
+        if (error_flags & ErrorFlag.UNDER_VOLTAGE) or (fault_flags & FaultFlag.UNDER_VOLTAGE):
             return self._recover_under_voltage()
         
-        if error_code & ErrorFlag.ENCODER_ERROR:
+        if (error_flags & ErrorFlag.ENCODER_FAULT) or (fault_flags & FaultFlag.ENCODER_UNCALIBRATED):
             return self._recover_encoder_error()
         
         # Default recovery: clear error and restart
@@ -168,13 +194,6 @@ class ErrorHandler:
             self.logger.error(f"Over-current recovery failed: {e}")
             return False
     
-    def _recover_over_voltage(self) -> bool:
-        """Recovery strategy for over-voltage"""
-        self.logger.error("Over-voltage detected. Check power supply!")
-        # Motor automatically stops
-        # User must fix power supply issue
-        return False
-    
     def _recover_under_voltage(self) -> bool:
         """Recovery strategy for under-voltage"""
         self.logger.error("Under-voltage detected. Check power supply!")
@@ -184,7 +203,7 @@ class ErrorHandler:
     
     def _recover_encoder_error(self) -> bool:
         """Recovery strategy for encoder error"""
-        self.logger.warning("Encoder error detected. Attempting restart.")
+        self.logger.warning("Encoder fault detected. Attempting restart.")
         
         try:
             # Disable and re-enable motor
@@ -295,19 +314,22 @@ def validate_can_id(can_id: int) -> bool:
         True if valid
         
     Raises:
+        TypeError: If can_id is not an integer
         ValueError: If CAN ID is out of range
     """
+    if not isinstance(can_id, int):
+        raise TypeError(f"CAN ID must be an integer, got {type(can_id).__name__}")
     if not (0x00 <= can_id <= 0x7F):
         raise ValueError(f"CAN ID must be 0x00-0x7F, got {can_id}")
     return True
 
 
-def validate_angle(angle: float, min_val: float = -12.5, max_val: float = 12.5) -> bool:
+def validate_angle(angle: float, min_val: float = -12.57, max_val: float = 12.57) -> bool:
     """
     Validate angle value
     
     Args:
-        angle: Angle in radians
+        angle: Angle in radians (±4π rad range)
         min_val: Minimum allowed value
         max_val: Maximum allowed value
         
@@ -316,18 +338,31 @@ def validate_angle(angle: float, min_val: float = -12.5, max_val: float = 12.5) 
         
     Raises:
         ValueError: If angle is out of range
+        
+    Warnings:
+        Issues warning if angle is within 5% of limits
     """
+    logger = logging.getLogger(__name__)
+    
+    # Warning threshold: within 5% of limit
+    threshold = 0.05
+    range_size = max_val - min_val
+    warning_margin = range_size * threshold
+    
+    if angle > max_val - warning_margin or angle < min_val + warning_margin:
+        logger.warning(f"Angle {angle:.3f} rad is near limit ({min_val}~{max_val})")
+    
     if not (min_val <= angle <= max_val):
         raise ValueError(f"Angle must be {min_val}~{max_val} rad, got {angle}")
     return True
 
 
-def validate_speed(speed: float, min_val: float = -30.0, max_val: float = 30.0) -> bool:
+def validate_speed(speed: float, min_val: float = -44.0, max_val: float = 44.0) -> bool:
     """
     Validate speed value
     
     Args:
-        speed: Speed in rad/s
+        speed: Speed in rad/s (~420 RPM max)
         min_val: Minimum allowed value
         max_val: Maximum allowed value
         
@@ -342,12 +377,12 @@ def validate_speed(speed: float, min_val: float = -30.0, max_val: float = 30.0) 
     return True
 
 
-def validate_torque(torque: float, min_val: float = -4.0, max_val: float = 4.0) -> bool:
+def validate_torque(torque: float, min_val: float = -17.0, max_val: float = 17.0) -> bool:
     """
     Validate torque value
     
     Args:
-        torque: Torque in Nm
+        torque: Torque in Nm (continuous rating)
         min_val: Minimum allowed value
         max_val: Maximum allowed value
         

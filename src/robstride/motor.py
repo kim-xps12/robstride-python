@@ -301,9 +301,9 @@ class RobStrideMotor:
         Send composite motion control command (Private protocol)
         
         Args:
-            torque: Torque feedforward [Nm], -4 to 4
-            angle: Target angle [rad], -12.5 to 12.5
-            speed: Target speed [rad/s], -30 to 30
+            torque: Torque feedforward [Nm], -17 to 17
+            angle: Target angle [rad], -12.57 to 12.57
+            speed: Target speed [rad/s], -44 to 44
             kp: Position gain, 0 to 500
             kd: Damping gain, 0 to 5
             
@@ -332,8 +332,8 @@ class RobStrideMotor:
         Send MIT composite control command
         
         Args:
-            position: Target position [rad], -12.5 to 12.5
-            velocity: Target velocity [rad/s], -30 to 30
+            position: Target position [rad], -12.57 to 12.57
+            velocity: Target velocity [rad/s], -44 to 44
             kp: Position gain, 0 to 500
             kd: Damping gain, 0 to 5
             torque: Feedforward torque [Nm], -18 to 18

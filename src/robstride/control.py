@@ -40,8 +40,8 @@ class PositionController:
         # Set control mode to PP (run_mode=1)
         self.motor.set_parameter(ParameterIndex.RUN_MODE, ControlMode.POSITION_PP, value_mode='j')
         
-        # Set speed limit
-        self.motor.set_parameter(ParameterIndex.LIMIT_SPD_PP, target_speed)
+        # Set speed limit (VEL_MAX for PP mode)
+        self.motor.set_parameter(ParameterIndex.VEL_MAX, target_speed)
         
         # Set target position
         self.motor.set_parameter(ParameterIndex.LOC_REF, target_angle)

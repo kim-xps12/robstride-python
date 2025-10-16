@@ -7,6 +7,7 @@ Implements all communication types (0x00-0x19) for the Private protocol.
 import can
 import time
 import struct
+import logging
 from typing import Optional, Callable
 from ..models import CommunicationType, MotorStatus, ParameterData, MotionControlCommand
 from .can_utils import (
@@ -86,7 +87,7 @@ class PrivateProtocolHandler:
             self.can_bus.send(msg)
             return True
         except Exception as e:
-            print(f"Error sending message: {e}")
+            logging.error(f"Error sending message: {e}")
             return False
     
     def _receive_message(self, expected_comm_type: Optional[int] = None) -> Optional[can.Message]:
@@ -119,7 +120,7 @@ class PrivateProtocolHandler:
                 return msg
             return None
         except Exception as e:
-            print(f"Error receiving message: {e}")
+            logging.error(f"Error receiving message: {e}")
             return None
     
     # === Core control commands ===
@@ -195,10 +196,17 @@ class PrivateProtocolHandler:
                 is_extended_id=True,
                 dlc=8
             )
+            # Debug: show what is being sent
+            try:
+                hex_data = ' '.join(f"{b:02X}" for b in data)
+                logging.debug(f"[DEBUG TX] EXTID=0x{ext_id:08X} DATA={hex_data}")
+            except Exception:
+                pass
+
             self.can_bus.send(msg)
             return True
         except Exception as e:
-            print(f"Error sending motion control message: {e}")
+            logging.error(f"Error sending motion control message: {e}")
             return False
     
     # === Parameter access ===
@@ -244,6 +252,13 @@ class PrivateProtocolHandler:
             raise ValueError(f"Invalid value_mode: {value_mode}")
         
         data = index_bytes + bytes([0x00, 0x00]) + value_bytes
+        # Debug: show parameter set frame
+        try:
+            ext_id = build_extended_can_id(CommunicationType.SET_SINGLE_PARAMETER, 0x00, self.master_id, self.motor_id)
+            hex_data = ' '.join(f"{b:02X}" for b in data)
+            logging.debug(f"[DEBUG PARAM TX] EXTID=0x{ext_id:08X} DATA={hex_data} (index=0x{param_index:04X}, mode={value_mode})")
+        except Exception:
+            pass
         return self._send_message(CommunicationType.SET_SINGLE_PARAMETER, data)
     
     def send_save_parameters(self) -> bool:
@@ -267,7 +282,25 @@ class PrivateProtocolHandler:
             True if sent successfully
         """
         data = bytes([0x00] * 8)
-        return self._send_message(CommunicationType.GET_ID, data)
+        sent = self._send_message(CommunicationType.GET_ID, data)
+
+        # Some RS02 variants/examples show different byte-ordering in the
+        # 16-bit data field. As a robustness measure, also send an alternate
+        # extended ID encoding where the master ID is placed in the other
+        # byte of the 16-bit field. This increases chance of discovery on
+        # devices that expect the opposite ordering.
+        try:
+            # Alternate ext id: build the 16-bit field with master in low byte
+            alt_data_field = (0x00 << 8) | (self.master_id & 0xFF)
+            alt_ext_id = build_extended_can_id(CommunicationType.GET_ID, alt_data_field, self.master_id, self.motor_id)
+            alt_msg = can.Message(arbitration_id=alt_ext_id, data=data, is_extended_id=True, dlc=8)
+            self.can_bus.send(alt_msg)
+            sent = sent or True
+        except Exception:
+            # Ignore secondary send failures
+            pass
+
+        return bool(sent)
     
     def send_set_can_id(self, new_id: int) -> bool:
         """
@@ -349,6 +382,12 @@ class PrivateProtocolHandler:
         if comm_type == CommunicationType.GET_ID:
             return self._process_get_id(msg, data_field, master_id, status)
         
+        # Auto-report (Type 0x18) has motor_id field = 0x00, handle it separately
+        if comm_type == CommunicationType.PROACTIVE_ESCALATION_SET:
+            # Auto-report feedback (Type 0x18 response)
+            # Note: motor_id field is 0x00 for auto-report, not master_id
+            return self._process_auto_report(msg, data_field, status)
+        
         # Check if message is from this motor (responses place host/master ID in motor_id field)
         if motor_id != self.master_id:
             return False
@@ -361,10 +400,6 @@ class PrivateProtocolHandler:
         elif comm_type == CommunicationType.GET_SINGLE_PARAMETER and param_data is not None:
             # Parameter read response (Type 0x11)
             return self._process_parameter_response(msg, param_data)
-        
-        elif comm_type == CommunicationType.PROACTIVE_ESCALATION_SET:
-            # Auto-report feedback (Type 0x18 response)
-            return self._process_auto_report(msg, data_field, status)
         
         elif comm_type == CommunicationType.ERROR_FEEDBACK:
             # Error feedback (Type 0x15)
@@ -382,8 +417,16 @@ class PrivateProtocolHandler:
         - Data bytes: 64-bit MCU unique identifier
         """
         try:
-            responding_motor_id = (data_field >> 8) & 0xFF
-            if responding_motor_id != self.motor_id:
+            # Some devices may place the responding motor ID in either the
+            # high or low byte of the 16-bit data field. Accept both.
+            responding_motor_id_high = (data_field >> 8) & 0xFF
+            responding_motor_id_low = data_field & 0xFF
+
+            if responding_motor_id_high == self.motor_id:
+                responding_motor_id = responding_motor_id_high
+            elif responding_motor_id_low == self.motor_id:
+                responding_motor_id = responding_motor_id_low
+            else:
                 return False
             
             unique_id = decode_uint64(msg.data, 0)
@@ -393,7 +436,7 @@ class PrivateProtocolHandler:
             self.last_device_uid = unique_id
             return True
         except Exception as e:
-            print(f"Error processing GET_ID response: {e}")
+            logging.error(f"Error processing GET_ID response: {e}")
             return False
     
     def _process_motor_status(self, msg: can.Message, data_field: int, status: MotorStatus) -> bool:
@@ -406,6 +449,12 @@ class PrivateProtocolHandler:
         """
         try:
             data = msg.data
+            # Debug: show received raw frame for motor status
+            try:
+                hex_data = ' '.join(f"{b:02X}" for b in data)
+                logging.debug(f"[DEBUG RX] EXTID=0x{msg.arbitration_id:08X} DATA={hex_data}")
+            except Exception:
+                pass
             
             # Extract pattern and error code from data_field (16-bit from ExtID)
             pattern = (data_field >> 14) & 0x03    # Bits 15:14
@@ -432,7 +481,7 @@ class PrivateProtocolHandler:
             
             return True
         except Exception as e:
-            print(f"Error processing motor status: {e}")
+            logging.error(f"Error processing motor status: {e}")
             return False
     
     def _process_auto_report(self, msg: can.Message, data_field: int, status: MotorStatus) -> bool:
@@ -446,6 +495,12 @@ class PrivateProtocolHandler:
         """
         try:
             data = msg.data
+            # Debug: show received raw frame for auto-report
+            try:
+                hex_data = ' '.join(f"{b:02X}" for b in data)
+                logging.debug(f"[DEBUG RX] EXTID=0x{msg.arbitration_id:08X} DATA={hex_data}")
+            except Exception:
+                pass
             
             pattern = (data_field >> 14) & 0x03
             error_code = (data_field >> 8) & 0x3F
@@ -467,7 +522,7 @@ class PrivateProtocolHandler:
             status.error_code = error_code
             return True
         except Exception as e:
-            print(f"Error processing auto report: {e}")
+            logging.error(f"Error processing auto report: {e}")
             return False
     
     def _process_error_feedback(self, msg: can.Message, data_field: int, status: MotorStatus) -> bool:
@@ -486,7 +541,7 @@ class PrivateProtocolHandler:
             status.warning_code = warning
             return True
         except Exception as e:
-            print(f"Error processing error feedback: {e}")
+            logging.error(f"Error processing error feedback: {e}")
             return False
     
     def _process_parameter_response(self, msg: can.Message, param_data: ParameterData) -> bool:
@@ -546,5 +601,5 @@ class PrivateProtocolHandler:
             
             return False
         except Exception as e:
-            print(f"Error processing parameter response: {e}")
+            logging.error(f"Error processing parameter response: {e}")
             return False

@@ -33,9 +33,21 @@ def safety_check():
     print("  5. You are ready to stop test if needed")
     print("="*60)
     
-    response = input("Continue with hardware tests? (yes/no): ")
-    
-    if response.lower() != 'yes':
+    # Allow automation via env var: set RS_HARDWARE_AUTO_CONFIRM=yes to auto-accept
+    import os
+
+    auto = os.environ.get("RS_HARDWARE_AUTO_CONFIRM", "").lower()
+    if auto == "yes":
+        response = "yes"
+    else:
+        # If stdin is not available (pytest captures output) avoid raising OSError
+        try:
+            response = input("Continue with hardware tests? (yes/no): ")
+        except Exception:
+            # Default to skipping hardware tests in non-interactive environments
+            pytest.skip("Hardware tests skipped (non-interactive environment)")
+
+    if response.lower() != "yes":
         pytest.skip("Hardware tests skipped by user")
     
     yield

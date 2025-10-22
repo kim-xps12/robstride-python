@@ -33,12 +33,12 @@ git clone https://github.com/yourusername/robstride-python.git
 cd robstride-python
 
 # uvで依存関係を自動インストール（仮想環境も自動作成）
-uv sync
+uv sync --extra test --extra dev
 ```
 
 ## クイックスタート
 
-### CANノードIDスキャン
+### CANノードIDのスキャン
 
 複数モーターが接続されている場合やCAN IDが不明なときは、`src/examples/scan_ids.py` を使ってバス上の応答するノードを検出できます。スクリプトは0x00〜0x7Fを順にプローブし、応答があればCAN IDと64bitユニークIDを表示します。
 
@@ -49,98 +49,51 @@ cd robstride-python/
 uv run python src/examples/scan_ids.py --interface can0 --start 0x00 --end 0x7F
 ```
 
-### 基本的な位置制御
+### ping
 
-**ファイル作成**: `test_position.py`
+`start`と`end`を同じIDにするとpingとして利用できます．
 
-```python
-from robstride import RobStrideMotor, ProtocolMode
-
-# モーターを初期化
-motor = RobStrideMotor(
-    can_id=0x01,
-    can_interface='can0',
-    protocol=ProtocolMode.PRIVATE,
-    auto_enable=True
-)
-
-# 位置を設定
-motor.position_control.set_pp_position(target_angle=1.57, target_speed=3.0)
-
-# ステータスを取得
-print(f"角度: {motor.angle:.3f} rad")
-print(f"速度: {motor.speed:.3f} rad/s")
-print(f"トルク: {motor.torque:.3f} Nm")
-print(f"温度: {motor.temperature:.1f}°C")
-
-# 終了時にモーターを無効化
-motor.disable_motor()
+```bash
+uv run python src/examples/scan_ids.py --interface can0 --start 0x7F --end 0x7F
 ```
 
-**実行方法**:
+### ゼロ点の設定
+
+ゼロ点として設定したい位置へモータを回したあとに以下を実行すると，その位置をゼロ点として記憶します．
+
 ```bash
-uv run python test_position.py
+uv run python src/examples/set_zero_position.py
+```
+
+### 位置制御
+
+#### ゼロ点への移動の例
+
+以下を実行すると，前節で設定したゼロ点へ移動します．
+
+ただし，ゼロ点の設定の後に電源を再投入した場合，回転方向が「移動距離が最小になる」が担保されないようです．
+
+```bash
+uv run python src/examples/go_zero_position.py 
 ```
 
 ### 速度制御
 
-**ファイル作成**: `test_speed.py`
-
-```python
-from robstride import RobStrideMotor
-
-motor = RobStrideMotor(can_id=0x01, can_interface='can0', auto_enable=True)
-
-# 電流制限付きで速度を設定
-motor.speed_control.set_speed(target_speed=10.0, current_limit=5.0)
-
-# 速度を監視
-print(f"現在の速度: {motor.speed:.2f} rad/s")
-```
-
-**実行方法**:
-```bash
-uv run python test_speed.py
-```
+(WIP)
 
 ### MITプロトコル制御
 
-**ファイル作成**: `test_mit.py`
-
-```python
-from robstride import RobStrideMotor, ProtocolMode
-
-motor = RobStrideMotor(
-    can_id=0x01,
-    can_interface='can0',
-    protocol=ProtocolMode.MIT,
-    auto_enable=True
-)
-
-# PDゲイン付きMIT複合制御
-motor.send_mit_control(
-    position=1.57,      # 目標位置 [rad]
-    velocity=0.0,       # 目標速度 [rad/s]
-    kp=50.0,           # 位置ゲイン
-    kd=1.0,            # ダンピングゲイン
-    torque=0.0         # フィードフォワードトルク [Nm]
-)
-```
-
-**実行方法**:
-```bash
-uv run python test_mit.py
-```
+(WIP)
 
 ## 制御モード
 
 ### Privateプロトコル
 
-1. **モーション制御モード (0)**: トルク、位置、速度、PDゲインを使った複合制御
-2. **位置制御 PP (1)**: ポイントツーポイント位置制御
-3. **速度制御 (2)**: 電流制限付き速度制御
-4. **電流制御 (3)**: 直接電流（トルク）制御
-5. **位置制御 CSP (5)**: サイクリック同期位置制御
+1. モーション制御モード (0): トルク、位置、速度、PDゲインを使った複合制御
+2. 位置制御 PP (1): ポイントツーポイント位置制御
+3. 速度制御 (2): 電流制限付き速度制御
+4. 電流制御 (3): 直接電流（トルク）制御
+5. 位置制御 CSP (5): サイクリック同期位置制御
 
 ### MITプロトコル
 
@@ -184,20 +137,6 @@ if motor.has_error:
 - `mit_mode.py`: MITプロトコル複合制御
 - `multi_motor.py`: 複数モーターの協調制御
 
-**サンプルの実行方法**:
-```bash
-# 基本的な位置制御
-uv run python src/examples/basic_position.py
-
-# 速度制御
-uv run python src/examples/speed_control.py
-
-# MITモード
-uv run python src/examples/mit_mode.py
-
-# マルチモーター制御
-uv run python src/examples/multi_motor.py
-```
 
 ## API リファレンス
 

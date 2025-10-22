@@ -68,6 +68,7 @@ class RobStrideMotor:
         self.state = MotorState.DISABLED
         self.status = MotorStatus()
         self.param_data = ParameterData()
+        self._current_run_mode = None  # Track current run mode to avoid redundant mode switches
         
         # Protocol handlers
         self.private_handler = PrivateProtocolHandler(can_id, self.can_bus, master_id)
@@ -84,18 +85,19 @@ class RobStrideMotor:
         
         # Status callback
         self.status_callback: Optional[Callable[[MotorStatus], None]] = None
-        
+
         # Start CAN listener
         self._running = True
         self._listener_thread = threading.Thread(target=self._can_listener, daemon=True)
         self._listener_thread.start()
-        
+
         # Auto-enable if requested
         if auto_enable:
             time.sleep(0.1)
             self.enable_motor()
-        
-        self.logger.log_info(self.motor_id, f"Motor initialized in {protocol.name} protocol mode")
+
+        # Log initialization at info level via ErrorLogger
+        self.logger.log_info(self.motor_id, f"Motor initialized in {self.protocol_mode.name} protocol mode")
     
     def __del__(self):
         """Cleanup on object destruction"""
@@ -113,6 +115,12 @@ class RobStrideMotor:
             try:
                 msg = self.can_bus.recv(timeout=0.1)
                 if msg is not None:
+                    # Log raw received frame for debugging
+                    try:
+                        hex_data = ' '.join(f"{b:02X}" for b in msg.data)
+                    except Exception:
+                        hex_data = str(msg.data)
+                    self.logger.log_debug(self.motor_id, f"Listener RX EXTID=0x{msg.arbitration_id:08X} DATA={hex_data}")
                     self._process_message(msg)
             except Exception as e:
                 self.logger.log_debug(self.motor_id, f"Listener error: {e}")
@@ -347,14 +355,17 @@ class RobStrideMotor:
             kd=kd
         )
         # Ensure motor is in Motion Control run_mode (0) before sending command
-        try:
-            # write run_mode as uint8 (value_mode='j')
-            self.set_parameter(ParameterIndex.RUN_MODE, ControlMode.MOTION_CONTROL, value_mode='j')
-            # small delay to allow motor to switch mode
-            time.sleep(0.02)
-        except Exception:
-            # If setting run_mode fails, proceed to send command anyway
-            pass
+        # Only set run_mode if it hasn't been set yet or changed
+        if self._current_run_mode != ControlMode.MOTION_CONTROL:
+            try:
+                # write run_mode as uint8 (value_mode='j')
+                self.set_parameter(ParameterIndex.RUN_MODE, ControlMode.MOTION_CONTROL, value_mode='j')
+                # small delay to allow motor to switch mode
+                time.sleep(0.02)
+                self._current_run_mode = ControlMode.MOTION_CONTROL
+            except Exception:
+                # If setting run_mode fails, proceed to send command anyway
+                pass
 
         success = self.private_handler.send_motion_control(cmd)
         if success:

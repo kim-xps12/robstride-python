@@ -10,6 +10,7 @@ import struct
 import logging
 from typing import Optional, Callable
 from ..models import CommunicationType, MotorStatus, ParameterData, MotionControlCommand
+from ..models import get_parameter_spec
 from .can_utils import (
     build_extended_can_id,
     parse_extended_can_id,
@@ -78,6 +79,15 @@ class PrivateProtocolHandler:
         """
         try:
             ext_id = build_extended_can_id(comm_type, data_field, self.master_id, self.motor_id)
+            # Show human-readable frame for debugging parameter writes
+            try:
+                hex_data = ' '.join(f"{b:02X}" for b in data)
+            except Exception:
+                hex_data = str(data)
+            logger = logging.getLogger(__name__)
+            if comm_type == CommunicationType.SET_SINGLE_PARAMETER:
+                logger.debug(f"[PARAM TX] EXTID=0x{ext_id:08X} DATA={hex_data}")
+
             msg = can.Message(
                 arbitration_id=ext_id,
                 data=data,
@@ -104,21 +114,31 @@ class PrivateProtocolHandler:
             msg = self.can_bus.recv(timeout=self.timeout)
             if msg is None:
                 return None
-                
+
             # Parse extended ID
-            if msg.is_extended_id:
-                comm_type, data_byte, master_id, motor_id = parse_extended_can_id(msg.arbitration_id)
-                
-                # Check if message is for this motor
-                if motor_id != self.master_id:  # Response has master_id in motor_id field
-                    return None
-                    
-                # Check communication type if specified
-                if expected_comm_type is not None and comm_type != expected_comm_type:
-                    return None
-                    
-                return msg
-            return None
+            if not msg.is_extended_id:
+                return None
+
+            comm_type, data_field, master_id, motor_id = parse_extended_can_id(msg.arbitration_id)
+
+            # Message addressing varies across RS02 variants: some devices
+            # place the host/master ID in the low byte (motor_id field),
+            # others place it in the high byte of the 16-bit data field.
+            # Accept messages when either the extracted master_id or motor_id
+            # matches the expected host/master ID or this motor's ID.
+            if not (
+                master_id == self.master_id or
+                motor_id == self.master_id or
+                master_id == self.motor_id or
+                motor_id == self.motor_id
+            ):
+                return None
+
+            # Check communication type if specified
+            if expected_comm_type is not None and comm_type != expected_comm_type:
+                return None
+
+            return msg
         except Exception as e:
             logging.error(f"Error receiving message: {e}")
             return None
@@ -376,35 +396,48 @@ class PrivateProtocolHandler:
         """
         if not msg.is_extended_id:
             return False
-        
+
         comm_type, data_field, master_id, motor_id = parse_extended_can_id(msg.arbitration_id)
-        
+
+        # Log the incoming message for debugging
+        logging.getLogger(__name__).debug(
+            f"[PROC MSG] EXTID=0x{msg.arbitration_id:08X} COMM=0x{comm_type:02X} "
+            f"DATAFIELD=0x{data_field:04X} MASTER=0x{master_id:02X} MOTOR=0x{motor_id:02X}"
+        )
+
+        # Handle GET_ID immediately
         if comm_type == CommunicationType.GET_ID:
             return self._process_get_id(msg, data_field, master_id, status)
-        
-        # Auto-report (Type 0x18) has motor_id field = 0x00, handle it separately
+
+        # Auto-report (Type 0x18) has motor_id field = 0x00, handle separately
         if comm_type == CommunicationType.PROACTIVE_ESCALATION_SET:
-            # Auto-report feedback (Type 0x18 response)
-            # Note: motor_id field is 0x00 for auto-report, not master_id
             return self._process_auto_report(msg, data_field, status)
-        
-        # Check if message is from this motor (responses place host/master ID in motor_id field)
-        if motor_id != self.master_id:
+
+        # Addressing: accept messages when any of the candidate ID locations
+        # (extid motor_id, data_field high byte, data_field low byte) match
+        # either the host/master ID or the expected motor ID. Some devices
+        # place IDs in different bytes, so check all of them.
+        data_high = (data_field >> 8) & 0xFF
+        data_low = data_field & 0xFF
+        candidate_ids = {motor_id, data_high, data_low}
+        if not (self.master_id in candidate_ids or self.motor_id in candidate_ids):
             return False
-        
-        # Process based on communication type
+
+        # Dispatch based on communication type
         if comm_type == CommunicationType.MOTOR_REQUEST:
-            # Motor status feedback (Type 0x02)
             return self._process_motor_status(msg, data_field, status)
-        
-        elif comm_type == CommunicationType.GET_SINGLE_PARAMETER and param_data is not None:
-            # Parameter read response (Type 0x11)
-            return self._process_parameter_response(msg, param_data)
-        
-        elif comm_type == CommunicationType.ERROR_FEEDBACK:
-            # Error feedback (Type 0x15)
+
+        if comm_type == CommunicationType.GET_SINGLE_PARAMETER and param_data is not None:
+            logging.getLogger(__name__).debug(f"[PARAM HANDLER] Received GET_SINGLE_PARAMETER extid=0x{msg.arbitration_id:08X}")
+            processed = self._process_parameter_response(msg, param_data)
+            logging.getLogger(__name__).debug(
+                f"[PARAM HANDLER] process result={processed} param.limit_cur={getattr(param_data,'limit_cur',None)}"
+            )
+            return processed
+
+        if comm_type == CommunicationType.ERROR_FEEDBACK:
             return self._process_error_feedback(msg, data_field, status)
-        
+
         return False
     
     def _process_get_id(self, msg: can.Message, data_field: int, master_id: int, status: MotorStatus) -> bool:
@@ -555,14 +588,54 @@ class PrivateProtocolHandler:
             
             # Extract parameter index (little-endian)
             param_index = decode_uint16_le(data, 0)
-            
-            # Extract value (float32 or uint8/uint16/uint32, little-endian)
-            # Try float32 first
+
+            # Determine parameter spec if available
+            spec = get_parameter_spec(param_index)
+
+            # Extract value. Prefer float32 (little-endian), but fall back
+            # to integer decoding (uint32/uint16/uint8) based on spec or
+            # observed payload when float decode fails.
+            value = None
+            if spec and spec.data_type == 'float32':
+                try:
+                    value = decode_float32_le(data, 4)
+                except Exception:
+                    value = None
+            elif spec and spec.data_type in ('uint32', 'uint16', 'uint8'):
+                try:
+                    if spec.data_type == 'uint32':
+                        import struct as _struct
+                        value = _struct.unpack_from('<I', data, 4)[0]
+                    elif spec.data_type == 'uint16':
+                        value = decode_uint16_le(data, 4)
+                    else:
+                        # uint8
+                        value = int(data[4])
+                except Exception:
+                    value = None
+
+            # Generic fallback: try float32, then uint32/uint16/uint8
+            if value is None:
+                try:
+                    value = decode_float32_le(data, 4)
+                except Exception:
+                    try:
+                        import struct as _struct
+                        value = _struct.unpack_from('<I', data, 4)[0]
+                    except Exception:
+                        try:
+                            value = decode_uint16_le(data, 4)
+                        except Exception:
+                            # Last resort: take single byte as integer
+                            value = float(data[4])
+
+            # Log raw response for debugging
             try:
-                value = decode_float32_le(data, 4)
-            except:
-                value = float(data[4])
-            
+                hex_data = ' '.join(f"{b:02X}" for b in data)
+            except Exception:
+                hex_data = str(data)
+            logging.getLogger(__name__).debug(f"[PARAM RX] IDX=0x{param_index:04X} RAW={hex_data} DECODED={value}")
+
             # Update ParameterData based on index - Complete RS02 parameter table
             param_name_map = {
                 0x7005: 'run_mode',

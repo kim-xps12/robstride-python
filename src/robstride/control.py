@@ -31,15 +31,17 @@ class PositionController:
         """
         Set position using PP (Point-to-Point) mode
         
+        Per RS02 specification: run_mode=1 is Position Control Mode (PP)
+        
         Args:
             target_angle: Target angle in radians
             target_speed: Target speed in rad/s
         """
-        # Set control mode to PP
+        # Set control mode to PP (run_mode=1)
         self.motor.set_parameter(ParameterIndex.RUN_MODE, ControlMode.POSITION_PP, value_mode='j')
         
-        # Set speed limit
-        self.motor.set_parameter(ParameterIndex.LIMIT_SPD_PP, target_speed)
+        # Set speed limit (VEL_MAX for PP mode)
+        self.motor.set_parameter(ParameterIndex.VEL_MAX, target_speed)
         
         # Set target position
         self.motor.set_parameter(ParameterIndex.LOC_REF, target_angle)
@@ -48,11 +50,13 @@ class PositionController:
         """
         Set position using CSP (Cyclic Synchronous Position) mode
         
+        Per RS02 specification: run_mode=5 is Position Mode (CSP)
+        
         Args:
             target_angle: Target angle in radians
             speed_limit: Speed limit in rad/s
         """
-        # Set control mode to CSP
+        # Set control mode to CSP (run_mode=5)
         self.motor.set_parameter(ParameterIndex.RUN_MODE, ControlMode.POSITION_CSP, value_mode='j')
         
         # Set speed limit
@@ -78,11 +82,13 @@ class SpeedController:
         """
         Set target speed
         
+        Per RS02 specification: run_mode=2 is Speed Control Mode
+        
         Args:
-            target_speed: Target speed in rad/s (-30 to 30)
+            target_speed: Target speed in rad/s (-44 to 44)
             current_limit: Current limit in A (0 to 23)
         """
-        # Set control mode to speed
+        # Set control mode to speed (run_mode=2)
         self.motor.set_parameter(ParameterIndex.RUN_MODE, ControlMode.SPEED, value_mode='j')
         
         # Set current limit
@@ -106,12 +112,14 @@ class CurrentController:
     
     def set_current(self, target_current: float):
         """
-        Set target current
+        Set target current (torque)
+        
+        Per RS02 specification: run_mode=3 is Current Control Mode
         
         Args:
             target_current: Target current in A (-23 to 23)
         """
-        # Set control mode to current
+        # Set control mode to current (run_mode=3)
         self.motor.set_parameter(ParameterIndex.RUN_MODE, ControlMode.CURRENT, value_mode='j')
         
         # Set target current

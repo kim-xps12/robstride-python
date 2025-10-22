@@ -38,6 +38,17 @@ uv sync
 
 ## クイックスタート
 
+### CANノードIDスキャン
+
+複数モーターが接続されている場合やCAN IDが不明なときは、`src/examples/scan_ids.py` を使ってバス上の応答するノードを検出できます。スクリプトは0x00〜0x7Fを順にプローブし、応答があればCAN IDと64bitユニークIDを表示します。
+
+```bash
+# 例: can0インターフェースでスキャン
+
+cd robstride-python/
+uv run python src/examples/scan_ids.py --interface can0 --start 0x00 --end 0x7F
+```
+
 ### 基本的な位置制御
 
 **ファイル作成**: `test_position.py`

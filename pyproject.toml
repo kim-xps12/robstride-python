@@ -29,6 +29,7 @@ classifiers = [
 dependencies = [
     "python-can>=4.0.0",
     "typing-extensions>=4.0.0",
+    "matplotlib>=3.5.0",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +47,9 @@ test = [
     "pytest-cov>=3.0.0",
     "pytest-mock>=3.6.0",
     "pytest-timeout>=2.1.0",
+]
+plot = [
+    "matplotlib>=3.5.0",
 ]
 
 [project.urls]

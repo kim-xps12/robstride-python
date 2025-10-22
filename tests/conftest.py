@@ -161,8 +161,15 @@ def hardware_motor() -> Generator[RobStrideMotor, None, None]:
             hardware_motor.enable_motor()
             ...
     """
+    import os
+    can_id_env = os.environ.get('ROBSTRIDE_TEST_MOTOR_ID')
+    try:
+        can_id = int(can_id_env, 0) if can_id_env is not None else 0x7F
+    except Exception:
+        can_id = 0x7F
+
     motor = RobStrideMotor(
-        can_id=1,
+        can_id=can_id,
         can_interface='can0',
         protocol=ProtocolMode.PRIVATE,
         auto_enable=False

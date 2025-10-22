@@ -5,7 +5,7 @@ Unit tests for PrivateProtocolHandler command formatting
 import struct
 import pytest
 
-from robstride.models import CommunicationType, MotionControlCommand, ParameterIndex
+from robstride.models import CommunicationType, MotionControlCommand, ParameterIndex, get_parameter_spec
 from robstride.protocol.private import PrivateProtocolHandler
 from robstride.protocol.can_utils import (
     encode_torque_16bit,
@@ -684,12 +684,29 @@ def test_all_parameter_indices_mapping(handler, motor_status, parameter_data, mo
     for param_index, test_value, attr_name in test_params:
         data_field = (handler.master_id << 8) | 0x00
         ext_id = ((CommunicationType.GET_SINGLE_PARAMETER & 0x1F) << 24) | (data_field << 8) | handler.master_id
+        
+        # Get parameter spec to determine data type
+        spec = get_parameter_spec(param_index)
+        
+        # Encode value based on data type
+        if spec and spec.data_type in ('uint8', 'uint16', 'uint32'):
+            int_value = int(test_value)
+            if spec.data_type == 'uint8':
+                value_bytes = [int_value, 0x00, 0x00, 0x00]
+            elif spec.data_type == 'uint16':
+                value_bytes = list(struct.pack("<H", int_value)) + [0x00, 0x00]
+            else:  # uint32
+                value_bytes = list(struct.pack("<I", int_value))
+        else:
+            # Default to float32
+            value_bytes = list(struct.pack("<f", test_value))
+        
         payload = [
             param_index & 0xFF,
             (param_index >> 8) & 0xFF,
             0x00,
             0x00,
-            *struct.pack("<f", test_value)
+            *value_bytes
         ]
         msg = mock_can_message(arbitration_id=ext_id, data=payload)
         

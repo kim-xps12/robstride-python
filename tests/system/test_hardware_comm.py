@@ -52,24 +52,32 @@ class TestBasicCommunication:
     def test_parameter_roundtrip(self, hardware_motor, safety_check):
         """TC-S-003: Parameter write-read roundtrip"""
         motor = hardware_motor
-        
+
         motor.enable_motor()
         time.sleep(0.2)
         assert motor.state == MotorState.ENABLED
-        
+
         # Write current limit
         test_value = 8.0
-        motor.set_parameter(ParameterIndex.LIMIT_CUR, test_value)
-        time.sleep(0.1)
-        
-        # Read back
-        motor.get_parameter(ParameterIndex.LIMIT_CUR)
+        # Some devices accept parameter writes only when disabled.
+        # Disable motor, write parameter, then re-enable to verify.
+        motor.disable_motor()
         time.sleep(0.2)
-        
+        motor.set_parameter(ParameterIndex.LIMIT_CUR, test_value)
+        # Allow more time for the motor to apply parameter write
+        time.sleep(0.5)
+
+        # Re-enable and read back
+        motor.enable_motor()
+        time.sleep(0.2)
+        motor.get_parameter(ParameterIndex.LIMIT_CUR)
+        # Give the listener thread time to receive and process the response
+        time.sleep(0.5)
+
         # Verify (implementation-dependent)
         if motor.param_data.limit_cur is not None:
             assert abs(motor.param_data.limit_cur - test_value) < 0.5
-        
+
         motor.disable_motor()
         assert motor.state == MotorState.DISABLED
 

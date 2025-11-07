@@ -2,14 +2,18 @@
 
 RobStride RS02モーターをCANバス経由で制御するためのPython実装です。PrivateプロトコルとMITプロトコルの両方に対応予定です．
 
+## 想定動作環境
+
+- OS: Ubuntu 24.04（推奨，親しい環境でも動作する可能性はあります）
+- CANアダプタ: DSD TECH SH-C30G
+  - Amazon: https://amzn.asia/d/4n2BXfD
+
 ## インストール
 
 ### 必要要件
 
 - Python 3.8 以上
-- CANインターフェース
-- `uv`パッケージマネージャー（推奨）
-- OS: Ubuntu 24.04（推奨，親しい環境でも動作する可能性はあります）
+- `uv`パッケージマネージャー
 
 ### uvのインストール
 

@@ -82,7 +82,7 @@ def main():
         target_angle = 0.0  # rad
         
         # Movement parameters
-        duration = 5.0  # seconds - 目標位置まで移動する時間
+        duration = 2.0  # seconds - 目標位置まで移動する時間
         control_frequency = 100.0  # Hz - 制御ループの周波数
         dt = 1.0 / control_frequency
         

@@ -25,7 +25,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ### プロジェクトのセットアップ
 
 ```bash
-git clone https://github.com/yourusername/robstride-python.git
+git clone https://github.com/kim-xps12/robstride-python.git
 cd robstride-python
 
 # uvで依存関係を自動インストール（仮想環境も自動作成）

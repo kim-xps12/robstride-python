@@ -1,134 +1,181 @@
-# (WIP)RobStride モーター制御ライブラリ for Python
+# RobStride モータ制御ライブラリ (Pure Python)
 
-RobStride RS02モーターをCANバス経由で制御するためのPython実装です。PrivateプロトコルとMITプロトコルの両方に対応予定です．
+CANインターフェース経由でRobStride BLDCモータを制御するためのPure Pythonライブラリです。C++ ROS2実装を移植し、ROSに依存しないクリーンなモータ制御APIを提供します。
 
-## 想定動作環境
+## 特徴
 
-- OS: Ubuntu 24.04（推奨，親しい環境でも動作する可能性はあります）
-- CANアダプタ: DSD TECH SH-C30G
-  - Amazon: https://amzn.asia/d/4n2BXfD
+- **Pure Python実装** - ROS依存なし
+- **複数の制御モード**:
+  - 運控モード (Mode 0): トルク、位置、速度をKp/Kdと組み合わせた制御
+  - 位置PPモード (Mode 1): Point-to-Point位置制御
+  - 速度モード (Mode 2): 速度制御
+  - 電流モード (Mode 3): Iq/Id直接電流制御
+  - 位置CSPモード (Mode 5): Cyclic Synchronous Position制御
+- **型安全** - mypy対応の完全な型アノテーション
+- **PEP 8準拠** - ruffによるフォーマット
+
+## 要件
+
+- Python 3.11以上
+- SocketCANインターフェース (Linux)
+- CANハードウェアインターフェース (例: canable)
 
 ## インストール
 
-### 必要要件
-
-- Python 3.8 以上
-- `uv`パッケージマネージャー
-
-### uvのインストール
+### uvを使用 (推奨)
 
 ```bash
-# uvをインストール（まだの場合）
-curl -LsSf https://astral.sh/uv/install.sh | sh
+cd python
+uv sync
 ```
 
-### プロジェクトのセットアップ
+### pipを使用
 
 ```bash
-git clone https://github.com/kim-xps12/robstride-python.git
-cd robstride-python
-
-# uvで依存関係を自動インストール（仮想環境も自動作成）
-uv sync --extra test --extra dev
+cd python
+pip install -e .
 ```
 
 ## クイックスタート
 
-### CANインターフェースの有効化
+```python
+from robstride_motor import RobStrideMotor, ActuatorType
 
-```bash
-sudo ip link set can0 up type can bitrate 1000000
+# モータを初期化
+motor = RobStrideMotor(
+    can_interface="can0",
+    master_id=0xFF,
+    motor_id=0x01,
+    actuator_type=ActuatorType.ROBSTRIDE_00,
+)
+
+# モータを有効化
+motor.enable_motor()
+
+# 運控モードコマンドを送信
+feedback = motor.send_motion_command(
+    torque=0.0,
+    position=1.57,  # rad
+    velocity=0.1,   # rad/s
+    kp=0.1,
+    kd=0.1,
+)
+
+print(f"位置: {feedback.position} rad")
+print(f"速度: {feedback.velocity} rad/s")
+print(f"トルク: {feedback.torque} Nm")
+print(f"温度: {feedback.temperature} °C")
+
+# モータを無効化
+motor.disable_motor()
 ```
 
-`can0`の箇所は適宜読み替えてください．
-
-### CANノードIDのスキャン
-
-複数モーターが接続されている場合やCAN IDが不明なときは、`src/examples/scan_ids.py` を使ってバス上の応答するノードを検出できます。スクリプトは0x00〜0x7Fを順にプローブし、応答があればCAN IDと64bitユニークIDを表示します。
+## サンプルの実行
 
 ```bash
-# 例: can0インターフェースでスキャン
-
-cd robstride-python/
-uv run python src/examples/scan_ids.py --interface can0 --start 0x00 --end 0x7F
+cd python
+uv run python examples/basic_control.py
 ```
 
-### ping
+## CANインターフェースのセットアップ
 
-`start`と`end`を同じIDにするとpingとして利用できます．
+ライブラリを使用する前に、CANインターフェースが適切に設定されていることを確認してください：
 
 ```bash
-uv run python src/examples/scan_ids.py --interface can0 --start 0x7F --end 0x7F
+# 1 MbpsでCANインターフェースを起動
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set up can0
+
+# インターフェースが起動していることを確認
+ip link show can0
 ```
 
-### ゼロ点の設定
+## APIリファレンス
 
-ゼロ点として設定したい位置へモータを回したあとに以下を実行すると，その位置をゼロ点として記憶します．
+### RobStrideMotorクラス
 
-```bash
-uv run python src/examples/set_zero_position.py
-```
-
-### 位置制御
-
-#### ゼロ点への移動の例
-
-以下を実行すると，前節で設定したゼロ点へ移動します．
-
-ただし，ゼロ点の設定の後に電源を再投入した場合，回転方向が「移動距離が最小になる」が担保されないようです．
-
-```bash
-uv run python src/examples/go_zero_position.py 
-```
-
-### 速度制御
-
-(WIP)
-
-### MITプロトコル制御
-
-(WIP)
-
-
-## パラメータアクセス
+#### 初期化
 
 ```python
-from robstride.models import ParameterIndex
-
-# パラメータ読み取り
-motor.get_parameter(ParameterIndex.VBUS)
-print(f"バス電圧: {motor.param_data.vbus:.1f} V")
-
-# パラメータ書き込み
-motor.set_parameter(ParameterIndex.LIMIT_CUR, 5.0, value_mode='p')
-
-# パラメータをFLASHに保存
-motor.save_parameters()
+motor = RobStrideMotor(
+    can_interface: str,      # CANインターフェース名 (例: "can0")
+    master_id: int,          # マスターデバイスID (通常 0xFF)
+    motor_id: int,           # モータデバイスID
+    actuator_type: ActuatorType  # パラメータマッピング用のアクチュエータタイプ
+)
 ```
 
-## サンプルコード
+#### 制御メソッド
 
-`src/examples/` ディレクトリにサンプルがあります：
+- `enable_motor() -> MotorFeedback` - モータを有効化
+- `disable_motor(clear_error: bool = False) -> None` - モータを無効化
+- `send_motion_command(torque, position, velocity, kp, kd) -> MotorFeedback` - 運控モード
+- `send_velocity_command(velocity, acceleration) -> MotorFeedback` - 速度制御モード
+- `send_position_pp_command(angle, speed, acceleration) -> MotorFeedback` - PP位置モード
+- `send_position_csp_command(angle, speed) -> MotorFeedback` - CSP位置モード
+- `send_current_command(iq, id_val) -> MotorFeedback` - 電流制御モード
+- `set_zero_position() -> None` - 現在位置を零点に設定
+- `get_feedback() -> MotorFeedback` - 現在のモータ状態を取得
 
-- `basic_position.py`: 基本的な位置制御
-- `speed_control.py`: 可変速度制御
-- `mit_mode.py`: MITプロトコル複合制御
-- `multi_motor.py`: 複数モーターの協調制御
+### ActuatorType列挙型
 
+```python
+ActuatorType.ROBSTRIDE_00  # ROBSTRIDE_06まで
+```
 
-## API リファレンス
+各アクチュエータタイプには、事前定義された動作パラメータ（位置範囲、速度範囲、トルク範囲、Kp/Kd範囲）があります。
 
-(WIP)
+### MotorFeedback
 
-## 開発環境
+```python
+@dataclass
+class MotorFeedback:
+    position: float      # rad
+    velocity: float      # rad/s
+    torque: float        # Nm
+    temperature: float   # °C
+```
 
-### テストの実行
+## 開発
+
+### 型チェック
 
 ```bash
-# テストを実行
-uv run pytest
+uv run mypy robstride_motor
 ```
 
-### コードフォーマット
+### LintとFormat
 
-(WIP)
+```bash
+# チェック
+uv run ruff check robstride_motor
+
+# フォーマット
+uv run ruff format robstride_motor
+```
+
+## アーキテクチャ
+
+本ライブラリは`cpp/`にあるC++ ROS2実装のPure Python移植版です。主な違い：
+
+- **ROS依存なし** - SocketCAN通信に`python-can`を使用
+- **Pythonic API** - dataclass、enum、型ヒントを使用
+- **シンプル化** - ROS固有のスレッドとノードインフラを削除
+- **コア機能を保持** - 全制御モードとCANプロトコル詳細を維持
+
+## プロトコル詳細
+
+詳細なCANプロトコル仕様については`docs/doc.md`を参照してください：
+- 29ビット拡張CAN ID構造
+- 通信タイプとペイロード
+- パラメータインデックス
+- 制御モード仕様
+
+## ライセンス
+
+リポジトリのライセンスを参照してください。
+
+## 参考資料
+
+- オリジナルC++実装: `cpp/`
+- プロトコルドキュメント: `docs/doc.md`

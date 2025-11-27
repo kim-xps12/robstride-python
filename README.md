@@ -25,17 +25,8 @@ CANインターフェース経由でRobStride BLDCモータを制御するため
 ### uvを使用 (推奨)
 
 ```bash
-cd python
 uv sync
 ```
-
-### pipを使用
-
-```bash
-cd python
-pip install -e .
-```
-
 ## クイックスタート
 
 ```python

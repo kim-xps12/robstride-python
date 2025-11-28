@@ -232,6 +232,11 @@ class RobStrideMotor:
         self._send_frame(CommunicationType.MOTOR_ENABLE, self.master_id, data)
         time.sleep(0.001)
         self._receive_status_frame()
+        
+        # 現在のrun_modeを取得してcurrent_modeを更新
+        self.get_parameter(ParameterIndex.RUN_MODE)
+        time.sleep(0.001)
+        
         return MotorFeedback(self.position, self.velocity, self.torque, self.temperature)
 
     def disable_motor(self, clear_error: bool = False) -> None:
@@ -296,7 +301,8 @@ class RobStrideMotor:
             target_mode: Target control mode
             auto_enable: If True, enable motor after mode switch
         """
-        if self.current_mode != target_mode and self.pattern == 2:
+        # Always check and switch mode if needed
+        if self.current_mode != target_mode:
             self.disable_motor(clear_error=False)
             time.sleep(0.001)
             self.set_parameter(ParameterIndex.RUN_MODE, float(target_mode), is_mode=True)

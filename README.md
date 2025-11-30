@@ -1,17 +1,17 @@
-# RobStride モータ制御ライブラリ (Pure Python)
+# RobStride Library for Python + uv
 
-RobStride RS02モーターをCANバス経由で制御するためのPython実装です。PrivateプロトコルとMITプロトコルの両方に対応予定です．[公式のROS Bridge](https://github.com/RobStride/robstride_actuator_bridge)のC++クラス実装を参考にPythonへ移植しています．
+RobStride RS02モーターをCANバス経由で制御するためのPython実装です．PrivateプロトコルとMITプロトコルの両方に対応予定です．[公式のROS Bridge](https://github.com/RobStride/robstride_actuator_bridge)のC++クラス実装を参考にPythonへ移植しています．
 
-## 機能
+## Feature
 
 - 複数の制御モード:
-  - 運控モード (Mode 0): トルク、位置、速度をKp/Kdと組み合わせた制御
-  - 位置PPモード (Mode 1): Point-to-Point位置制御
+  - 運控モード (Mode 0): 目標位置，目標速度，補正トルク，比例ゲイン，微分ゲインの5パラメータを指定して制御
+  - 位置PPモード (Mode 1): Profile Position 位置制御
   - 速度モード (Mode 2): 速度制御
-  - 電流モード (Mode 3): Iq/Id直接電流制御
+  - 電流モード (Mode 3): 電流制御
   - 位置CSPモード (Mode 5): Cyclic Synchronous Position制御
 
-## 想定動作環境
+## Environment
 
 - OS: Ubuntu24.04
     - SocketCANインターフェース (Linux)
@@ -20,24 +20,24 @@ RobStride RS02モーターをCANバス経由で制御するためのPython実装
 - Python 3.11以上
 - uvパッケージマネージャ
 
-## インストール
+## Installation
 
-### uvのインストール
+### uv
 
 ```bash
 # uvをインストール（まだの場合）
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 依存関係を解消
+### dependencies
 
 ```bash
 uv sync
 ```
 
-## CANインターフェースのセットアップ
+## Setup CAN Interface
 
-ライブラリを使用する前に、CANインターフェースが適切に設定されていることを確認してください：
+ライブラリを使用する前に，CANインターフェースが適切に設定されていることを確認してください：
 
 ```bash
 # 1 MbpsでCANインターフェースを起動
@@ -47,9 +47,9 @@ sudo ip link set up can0 type can bitrate 1000000
 ip link show can0
 ```
 
-## サンプルの実行
+## How to use (example code)
 
-`examples/`ディレクトリにサンプル実装が用意されています。
+`examples/`ディレクトリにサンプル実装が用意されています．
 
 ### モーターのスキャン
 
@@ -71,7 +71,7 @@ uv run examples/scan_motors.py --interface can1 --start 0x7D --end 0x80
 
 ### 位置制御（運控モード / MIT方式）
 
-運控モード（Mode 0）を使用した位置制御です。ホスト側で軌道を計算し、トルク・位置・速度・Kp/Kdを毎制御周期送信します：
+運控モード（Mode 0）を使用した位置制御です．ホスト側で軌道を計算し，トルク・位置・速度・Kp/Kdを毎制御周期送信します：
 
 ```bash
 # 制御周期を精度良く保つループでゼロ点へ移動
@@ -89,7 +89,7 @@ uv run examples/enable_torque_mit.py --kp 2 --kd 0.02
 
 ### 位置制御（PPモード）
 
-PPモード（Mode 1）を使用した位置制御です。目標位置・速度・加速度を指定すると、モーター内部で軌道を生成して移動します：
+PPモード（Mode 1）を使用した位置制御です．目標位置・速度・加速度を指定すると，モーター内部で軌道を生成して移動します：
 
 ```bash
 uv run examples/move_to_zero_pp.py
@@ -104,7 +104,7 @@ uv run examples/set_custom_zero.py --interface can0 --motor 0x7F
 ```
 
 
-## クイックスタート
+## (WIP) Quick Start
 
 ```python
 from robstride_motor import RobStrideMotor, ActuatorType
@@ -138,7 +138,7 @@ print(f"温度: {feedback.temperature} °C")
 motor.disable_motor()
 ```
 
-## APIリファレンス
+## API Reference
 
 ### RobStrideMotorクラス
 
@@ -171,7 +171,7 @@ motor = RobStrideMotor(
 ActuatorType.ROBSTRIDE_00  # ROBSTRIDE_06まで
 ```
 
-各アクチュエータタイプには、事前定義された動作パラメータ（位置範囲、速度範囲、トルク範囲、Kp/Kd範囲）があります。
+各アクチュエータタイプには，事前定義された動作パラメータ（位置範囲，速度範囲，トルク範囲，Kp/Kd範囲）があります．
 
 ### MotorFeedback
 
@@ -184,15 +184,15 @@ class MotorFeedback:
     temperature: float   # °C
 ```
 
-## 開発
+## for Developer
 
-### 型チェック
+### Type check
 
 ```bash
 uv run mypy robstride_motor
 ```
 
-### LintとFormat
+### Lint / Format
 
 ```bash
 # Linter
@@ -202,7 +202,7 @@ uv run ruff check robstride_motor
 uv run ruff format robstride_motor
 ```
 
-## 参考
+## Reference
 
 - Orginal Implementation: 
   - https://github.com/RobStride/robstride_actuator_bridge

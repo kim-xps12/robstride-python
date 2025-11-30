@@ -104,6 +104,10 @@ ENV/
 env.bak/
 venv.bak/
 
+.ruff_cache/
+
+.husky
+
 # Spyder project settings
 .spyderproject
 .spyproject

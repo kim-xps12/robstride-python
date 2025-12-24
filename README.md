@@ -69,6 +69,13 @@ uv run examples/scan_motors.py --start 0x01 --end 0x10
 uv run examples/scan_motors.py --interface can1 --start 0x7D --end 0x80
 ```
 
+### CAn Node IDの変更
+
+```bash
+# ID 0x7F を 0x01 に変更
+uv run examples/set_motor_id.py --current-id 0x7F --new-id 0x01 --save
+```
+
 ### 位置制御（運控モード / MIT方式）
 
 運控モード（Mode 0）を使用した位置制御です．ホスト側で軌道を計算し，トルク・位置・速度・Kp/Kdを毎制御周期送信します：
@@ -100,9 +107,30 @@ uv run examples/move_to_zero_pp.py
 現在のモーター位置をエンコーダのゼロ点として設定します：
 
 ```bash
+uv run examples/set_custom_zero.py --motor 0x7F
+
+# CANインターフェースを指定する場合
 uv run examples/set_custom_zero.py --interface can0 --motor 0x7F
 ```
 
+### ゼロ点モードの変更
+
+```bash
+# 現在のzero_sta値を表示
+uv run examples/set_zero_sta.py --motor-id 0x7F
+
+# zero_staを1に設定（-π〜πモード）
+uv run examples/set_zero_sta.py --motor-id 0x7F --set 1
+
+# zero_staを0に設定（0〜2πモード、デフォルト）
+uv run examples/set_zero_sta.py --motor-id 0x7F --set 0
+```
+
+### (WIP) ファームウェアバージョンの確認
+
+```bash
+uv run examples/get_firmware_version.py --motor-id 0x7F
+```
 
 ## (WIP) Quick Start
 

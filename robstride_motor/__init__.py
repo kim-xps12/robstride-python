@@ -5,7 +5,9 @@ from robstride_motor.types import (
     ActuatorType,
     CommunicationType,
     ControlMode,
+    FirmwareInfo,
     MotorFeedback,
+    ParameterIndex,
 )
 
 __version__ = "0.1.0"
@@ -15,5 +17,7 @@ __all__ = [
     "ActuatorType",
     "ControlMode",
     "CommunicationType",
+    "FirmwareInfo",
     "MotorFeedback",
+    "ParameterIndex",
 ]

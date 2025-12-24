@@ -17,6 +17,7 @@ This script will:
 import time
 import math
 import threading
+import argparse
 from collections import deque
 
 from robstride_motor import ActuatorType, RobStrideMotor
@@ -139,16 +140,41 @@ class PlotterThread(threading.Thread):
 
 
 def main():
+    # コマンドライン引数のパース
+    parser = argparse.ArgumentParser(
+        description='Swing motor in sinusoidal motion using Mode 0 (MIT mode) with real-time plotting'
+    )
+    parser.add_argument('--interface', default='can0', help='CAN interface (default: can0)')
+    parser.add_argument('--motor-id', type=lambda x: int(x, 0), default=127,
+                        help='Motor ID (default: 127)')
+    parser.add_argument('--master-id', type=lambda x: int(x, 0), default=255,
+                        help='Master ID (default: 255)')
+    parser.add_argument('--actuator-type', type=int, default=5, choices=range(7),
+                        help='Actuator type 0-6 (default: 5 for RS05)')
+    parser.add_argument('--amplitude', type=float, default=SWING_AMPLITUDE_DEG,
+                        help=f'Swing amplitude in degrees (default: {SWING_AMPLITUDE_DEG})')
+    parser.add_argument('--frequency', type=float, default=SWING_FREQUENCY_HZ,
+                        help=f'Swing frequency in Hz (default: {SWING_FREQUENCY_HZ})')
+    parser.add_argument('--duration', type=float, default=SWING_DURATION_SEC,
+                        help=f'Swing duration in seconds (default: {SWING_DURATION_SEC})')
+    parser.add_argument('--kp', type=float, default=200.0,
+                        help='Position proportional gain (default: 200.0)')
+    parser.add_argument('--kd', type=float, default=3.0,
+                        help='Position derivative gain (default: 3.0)')
+    parser.add_argument('--freq', type=float, default=100.0,
+                        help='Control loop frequency in Hz (default: 100.0)')
+    args = parser.parse_args()
+    
     # 正弦波パラメータをラジアンに変換
-    amplitude_rad = math.radians(SWING_AMPLITUDE_DEG)
-    angular_frequency = 2.0 * math.pi * SWING_FREQUENCY_HZ  # ω = 2πf
+    amplitude_rad = math.radians(args.amplitude)
+    angular_frequency = 2.0 * math.pi * args.frequency  # ω = 2πf
     
     print("=" * 60)
     print("Sinusoidal Swing Control")
     print("=" * 60)
-    print(f"Amplitude: ±{SWING_AMPLITUDE_DEG}° (±{amplitude_rad:.4f} rad)")
-    print(f"Frequency: {SWING_FREQUENCY_HZ} Hz")
-    print(f"Duration:  {SWING_DURATION_SEC} sec")
+    print(f"Amplitude: ±{args.amplitude}° (±{amplitude_rad:.4f} rad)")
+    print(f"Frequency: {args.frequency} Hz")
+    print(f"Duration:  {args.duration} sec")
     print("=" * 60)
     
     # プロットスレッドの初期化と開始
@@ -159,13 +185,13 @@ def main():
     motor = None
     try:
         motor = RobStrideMotor(
-            can_interface='can0',
-            master_id=0xFF,
-            motor_id=0x7F,
-            actuator_type=ActuatorType.ROBSTRIDE_05,
+            can_interface=args.interface,
+            master_id=args.master_id,
+            motor_id=args.motor_id,
+            actuator_type=ActuatorType(args.actuator_type),
         )
         
-        print(f"Motor initialized: motor_id=0x{motor.motor_id:02X}")
+        print(f"Motor initialized: motor_id={args.motor_id}")
 
         # Enable motor
         print("Enabling motor...")
@@ -173,9 +199,9 @@ def main():
         time.sleep(0.1)
 
         # Movement parameters
-        kp = 200.0  # 位置比例ゲイン (0.0〜500.0)
-        kd = 3.0    # 位置微分ゲイン (0.0〜5.0)
-        control_frequency = 100.0  # Hz - 制御ループの周波数
+        kp = args.kp  # 位置比例ゲイン (0.0〜500.0)
+        kd = args.kd    # 位置微分ゲイン (0.0〜5.0)
+        control_frequency = args.freq  # Hz - 制御ループの周波数
         dt = 1.0 / control_frequency
         
         # Spin-wait threshold: スリープ残り時間がこの値以下になったらビジーウェイトする
@@ -204,7 +230,7 @@ def main():
             elapsed = current_time - start_time
             
             # 経過時間が目標時間を超えたら終了
-            if elapsed >= SWING_DURATION_SEC:
+            if elapsed >= args.duration:
                 # 最後に目標位置へ送信（最終位置で停止）
                 target_angle = amplitude_rad * math.sin(angular_frequency * elapsed)
                 feedback = motor.send_motion_command(

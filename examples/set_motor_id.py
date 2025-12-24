@@ -55,8 +55,8 @@ Examples:
     parser.add_argument(
         "--master-id",
         type=lambda x: int(x, 0),
-        default=0xFF,
-        help="Master ID (default: 0xFF)",
+        default=255,
+        help="Master ID (default: 255)",
     )
     parser.add_argument(
         "--actuator-type",
@@ -77,21 +77,32 @@ Examples:
     )
     args = parser.parse_args()
 
+    # コマンドライン引数から元の表記を取得
+    import sys as sys_module
+    current_id_str = str(args.current_id)
+    new_id_str = str(args.new_id)
+    
+    for i, arg in enumerate(sys_module.argv):
+        if arg == "--current-id" and i + 1 < len(sys_module.argv):
+            current_id_str = sys_module.argv[i + 1]
+        elif arg == "--new-id" and i + 1 < len(sys_module.argv):
+            new_id_str = sys_module.argv[i + 1]
+
     # Validate new ID
     if not 1 <= args.new_id <= 127:
         print(f"Error: New ID must be between 1 and 127, got {args.new_id}")
         return 1
 
     if args.current_id == args.new_id:
-        print(f"Error: Current ID and new ID are the same ({args.current_id:#x})")
+        print(f"Error: Current ID and new ID are the same ({current_id_str})")
         return 1
 
     # Confirmation
     print(f"Motor ID Change")
     print(f"===============")
     print(f"  Interface  : {args.interface}")
-    print(f"  Current ID : {args.current_id:#x} ({args.current_id})")
-    print(f"  New ID     : {args.new_id:#x} ({args.new_id})")
+    print(f"  Current ID : {current_id_str}")
+    print(f"  New ID     : {new_id_str}")
     print(f"  Save       : {'Yes (persistent)' if args.save else 'No (temporary)'}")
     print()
 
@@ -105,7 +116,7 @@ Examples:
             return 0
 
     try:
-        print(f"\nConnecting to motor at ID {args.current_id:#x}...")
+        print(f"\nConnecting to motor at ID {current_id_str}...")
         motor = RobStrideMotor(
             can_interface=args.interface,
             master_id=args.master_id,
@@ -113,11 +124,11 @@ Examples:
             actuator_type=ActuatorType(args.actuator_type),
         )
 
-        print(f"Changing ID from {args.current_id:#x} to {args.new_id:#x}...")
+        print(f"Changing ID from {current_id_str} to {new_id_str}...")
         success = motor.set_can_id(args.new_id, save=args.save)
 
         if success:
-            print(f"\n[Success] Motor ID changed to {args.new_id:#x}")
+            print(f"\n[Success] Motor ID changed to {new_id_str}")
             if args.save:
                 print("          Settings saved to flash memory.")
             else:

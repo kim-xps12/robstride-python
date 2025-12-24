@@ -4,27 +4,61 @@
 位置制御モード（PP）で移動させます。
 
 使用方法:
-    python examples/move_to_zero.py
+    uv run examples/move_to_zero_pp.py
+    uv run examples/move_to_zero_pp.py --motor-id 1
 
 注意:
     - CANインターフェース（can0）が有効化されている必要があります
-    - モーターIDはデフォルトで0x01に設定されています
+    - モーターIDはデフォルトで127に設定されています
 """
 
 import time
+import argparse
 
 from robstride_motor import ActuatorType, RobStrideMotor
 
 
 def main() -> None:
     """RS02モーターをゼロ点まで回転させる."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description='Move motor to zero position using PP mode'
+    )
+    parser.add_argument('--interface', default='can0', help='CAN interface (default: can0)')
+    parser.add_argument(
+        '--motor-id',
+        type=lambda x: int(x, 0),
+        default=127,
+        help='Motor ID (default: 127)',
+    )
+    parser.add_argument(
+        '--master-id',
+        type=lambda x: int(x, 0),
+        default=255,
+        help='Master ID (default: 255)',
+    )
+    parser.add_argument(
+        '--actuator-type',
+        type=int,
+        default=2,
+        choices=range(7),
+        help='Actuator type 0-6 (default: 2 for RS02)',
+    )
+    parser.add_argument('--speed', type=float, default=5.0,
+                        help='Movement speed in rad/s (default: 5.0)')
+    parser.add_argument('--acceleration', type=float, default=10.0,
+                        help='Movement acceleration in rad/s² (default: 10.0)')
+    parser.add_argument('--tolerance', type=float, default=0.05,
+                        help='Position tolerance in rad (default: 0.05)')
+    args = parser.parse_args()
+    
     # RS02モーターコントローラの初期化
     # ActuatorType.ROBSTRIDE_02 を使用してRS02モーターを指定
     motor = RobStrideMotor(
-        can_interface="can0",
-        master_id=0xFF,
-        motor_id=0x7F,
-        actuator_type=ActuatorType.ROBSTRIDE_02,
+        can_interface=args.interface,
+        master_id=args.master_id,
+        motor_id=args.motor_id,
+        actuator_type=ActuatorType(args.actuator_type),
     )
 
     try:
@@ -36,8 +70,8 @@ def main() -> None:
 
         # 目標位置をゼロ点（0 rad）に設定
         target_position = 0.0  # rad
-        speed = 5.0  # rad/s - 移動速度
-        acceleration = 10.0  # rad/s² - 加速度
+        speed = args.speed  # rad/s - 移動速度
+        acceleration = args.acceleration  # rad/s² - 加速度
 
         print(f"\nゼロ点（{target_position} rad）へ移動中...")
         print(f"速度: {speed} rad/s, 加速度: {acceleration} rad/s²")
@@ -50,7 +84,7 @@ def main() -> None:
         )
 
         # 目標位置に到達するまで待機（位置をモニタリング）
-        tolerance = 0.05  # 許容誤差 (rad)
+        tolerance = args.tolerance  # 許容誤差 (rad)
         timeout = 10.0  # タイムアウト (秒)
         start_time = time.time()
 

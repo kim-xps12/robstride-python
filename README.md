@@ -56,24 +56,24 @@ ip link show can0
 CANバス上のモーターを検出します：
 
 ```bash
-# RobStrideのデフォルトID 0x7Fを指定してスキャン
-uv run examples/scan_motors.py --start 0x7F --end 0x7F
+# RobStrideのデフォルトID 127を指定してスキャン
+ uv run examples/scan_motors.py --start 127 --end 127
 
-# デフォルト範囲（0x01〜0x7F）をスキャン
+# デフォルト範囲（1～127）をスキャン
 uv run examples/scan_motors.py
 
 # ID範囲を指定してスキャン
-uv run examples/scan_motors.py --start 0x01 --end 0x10
+uv run examples/scan_motors.py --start 1 --end 10
 
 # CANインターフェースを指定
-uv run examples/scan_motors.py --interface can1 --start 0x7D --end 0x80
+uv run examples/scan_motors.py --interface can1 --start 125 --end 128
 ```
 
 ### CAn Node IDの変更
 
 ```bash
-# ID 0x7F を 0x01 に変更
-uv run examples/set_motor_id.py --current-id 0x7F --new-id 0x01 --save
+# ID 127 を 1 に変更
+uv run examples/set_motor_id.py --current-id 127 --new-id 1 --save
 ```
 
 ### 位置制御（運控モード / MIT方式）
@@ -82,16 +82,16 @@ uv run examples/set_motor_id.py --current-id 0x7F --new-id 0x01 --save
 
 ```bash
 # 制御周期を精度良く保つループでゼロ点へ移動
-uv run examples/move_to_zero_mit.py
+uv run examples/move_to_zero_mit.py --motor-id 127
 
 # リアルタイムプロット付き
-uv run examples/move_to_zero_mit_plot.py
+uv run examples/move_to_zero_mit_plot.py --motor-id 127
 
 # その場でトルクをオンする
-uv run examples/enable_torque_mit.py
+uv run examples/enable_torque_mit.py --motor-id 127
 
 # 柔らかめの位置制御
-uv run examples/enable_torque_mit.py --kp 2 --kd 0.02 
+uv run examples/enable_torque_mit.py --motor-id 127 --kp 2 --kd 0.02 
 ```
 
 ### 位置制御（PPモード）
@@ -99,7 +99,7 @@ uv run examples/enable_torque_mit.py --kp 2 --kd 0.02
 PPモード（Mode 1）を使用した位置制御です．目標位置・速度・加速度を指定すると，モーター内部で軌道を生成して移動します：
 
 ```bash
-uv run examples/move_to_zero_pp.py
+uv run examples/move_to_zero_pp.py --motor-id 11
 ```
 
 ### ゼロ点の設定
@@ -107,29 +107,29 @@ uv run examples/move_to_zero_pp.py
 現在のモーター位置をエンコーダのゼロ点として設定します：
 
 ```bash
-uv run examples/set_custom_zero.py --motor 0x7F
+uv run examples/set_custom_zero.py --motor-id 127
 
 # CANインターフェースを指定する場合
-uv run examples/set_custom_zero.py --interface can0 --motor 0x7F
+uv run examples/set_custom_zero.py --interface can0 --motor-id 127
 ```
 
 ### ゼロ点モードの変更
 
 ```bash
 # 現在のzero_sta値を表示
-uv run examples/set_zero_sta.py --motor-id 0x7F
+uv run examples/set_zero_sta.py --motor-id 127
 
-# zero_staを1に設定（-π〜πモード）
-uv run examples/set_zero_sta.py --motor-id 0x7F --set 1
+# zero_staを1に設定（-π～πモード）
+uv run examples/set_zero_sta.py --motor-id 127 --set 1
 
-# zero_staを0に設定（0〜2πモード、デフォルト）
-uv run examples/set_zero_sta.py --motor-id 0x7F --set 0
+# zero_staを0に設定（0～2πモード、デフォルト）
+uv run examples/set_zero_sta.py --motor-id 127 --set 0
 ```
 
 ### (WIP) ファームウェアバージョンの確認
 
 ```bash
-uv run examples/get_firmware_version.py --motor-id 0x7F
+uv run examples/get_firmware_version.py --motor-id 127
 ```
 
 ## (WIP) Quick Start
@@ -140,8 +140,8 @@ from robstride_motor import RobStrideMotor, ActuatorType
 # モータを初期化
 motor = RobStrideMotor(
     can_interface="can0",
-    master_id=0xFF,
-    motor_id=0x01,
+    master_id=255,
+    motor_id=1,
     actuator_type=ActuatorType.ROBSTRIDE_00,
 )
 
@@ -175,7 +175,7 @@ motor.disable_motor()
 ```python
 motor = RobStrideMotor(
     can_interface: str,      # CANインターフェース名 (例: "can0")
-    master_id: int,          # マスターデバイスID (通常 0xFF)
+    master_id: int,          # マスターデバイスID (通常 255)
     motor_id: int,           # モータデバイスID
     actuator_type: ActuatorType  # パラメータマッピング用のアクチュエータタイプ
 )

@@ -27,6 +27,26 @@ def main():
     parser = argparse.ArgumentParser(
         description='Hold motor position using Mode 0 (MIT mode) with adjustable kp/kd'
     )
+    parser.add_argument('--interface', default='can0', help='CAN interface (default: can0)')
+    parser.add_argument(
+        '--motor-id',
+        type=lambda x: int(x, 0),
+        default=127,
+        help='Motor ID (default: 127)',
+    )
+    parser.add_argument(
+        '--master-id',
+        type=lambda x: int(x, 0),
+        default=255,
+        help='Master ID (default: 255)',
+    )
+    parser.add_argument(
+        '--actuator-type',
+        type=int,
+        default=2,
+        choices=range(7),
+        help='Actuator type 0-6 (default: 2 for RS02)',
+    )
     parser.add_argument('--kp', type=float, default=200.0,
                         help='Position proportional gain (0.0-500.0, default: 200.0)')
     parser.add_argument('--kd', type=float, default=3.0,
@@ -43,13 +63,13 @@ def main():
     motor = None
     try:
         motor = RobStrideMotor(
-            can_interface='can0',
-            master_id=0xFF,
-            motor_id=0x7F,
-            actuator_type=ActuatorType.ROBSTRIDE_02,
+            can_interface=args.interface,
+            master_id=args.master_id,
+            motor_id=args.motor_id,
+            actuator_type=ActuatorType(args.actuator_type),
         )
         
-        print(f"Motor initialized: motor_id=0x{motor.motor_id:02X}")
+        print(f"Motor initialized: motor_id={args.motor_id}")
 
         # Enable motor
         print("Enabling motor...")

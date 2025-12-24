@@ -76,20 +76,20 @@ def main() -> int:
     parser.add_argument(
         "--start",
         type=lambda x: int(x, 0),
-        default=0x01,
-        help="Start motor ID (default: 0x01)",
+        default=1,
+        help="Start motor ID (default: 1)",
     )
     parser.add_argument(
         "--end",
         type=lambda x: int(x, 0),
-        default=0x7F,
-        help="End motor ID (default: 0x7F)",
+        default=127,
+        help="End motor ID (default: 127)",
     )
     parser.add_argument(
-        "--master",
+        "--master-id",
         type=lambda x: int(x, 0),
-        default=0xFF,
-        help="Master ID (default: 0xFF)",
+        default=255,
+        help="Master ID (default: 255)",
     )
     parser.add_argument(
         "--timeout",
@@ -99,9 +99,23 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # コマンドライン引数から元の表記を取得
+    import sys
+    start_str = str(args.start)
+    end_str = str(args.end)
+    master_str = str(args.master_id)
+    
+    for i, arg in enumerate(sys.argv):
+        if arg == "--start" and i + 1 < len(sys.argv):
+            start_str = sys.argv[i + 1]
+        elif arg == "--end" and i + 1 < len(sys.argv):
+            end_str = sys.argv[i + 1]
+        elif arg == "--master" and i + 1 < len(sys.argv):
+            master_str = sys.argv[i + 1]
+
     print(f"CANインターフェース: {args.interface}")
-    print(f"スキャン範囲: 0x{args.start:02X} ~ 0x{args.end:02X}")
-    print(f"マスターID: 0x{args.master:02X}")
+    print(f"スキャン範囲: {start_str} ~ {end_str}")
+    print(f"マスターID: {master_str}")
     print(f"タイムアウト: {args.timeout}秒")
     print("-" * 40)
 
@@ -119,8 +133,8 @@ def main() -> int:
 
     try:
         for motor_id in range(args.start, args.end + 1):
-            print(f"  ID 0x{motor_id:02X} をスキャン中...", end=" ", flush=True)
-            if scan_motor(bus, motor_id, args.master, args.timeout):
+            print(f"  ID {motor_id} をスキャン中...", end=" ", flush=True)
+            if scan_motor(bus, motor_id, args.master_id, args.timeout):
                 print("✓ 検出")
                 found_motors.append(motor_id)
             else:
@@ -135,7 +149,7 @@ def main() -> int:
     if found_motors:
         print(f"検出されたモーター ({len(found_motors)}台):")
         for motor_id in found_motors:
-            print(f"  - 0x{motor_id:02X} ({motor_id})")
+            print(f"  - {motor_id}")
     else:
         print("モーターは検出されませんでした")
 

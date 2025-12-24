@@ -17,6 +17,7 @@ This script will:
 import time
 import math
 import threading
+import argparse
 from collections import deque
 
 from robstride_motor import ActuatorType, RobStrideMotor
@@ -131,6 +132,27 @@ class PlotterThread(threading.Thread):
 
 
 def main():
+    # コマンドライン引数のパース
+    parser = argparse.ArgumentParser(
+        description='Move motor to zero position using Mode 0 (MIT mode) with real-time plotting'
+    )
+    parser.add_argument('--interface', default='can0', help='CAN interface (default: can0)')
+    parser.add_argument('--motor-id', type=lambda x: int(x, 0), default=127,
+                        help='Motor ID (default: 127)')
+    parser.add_argument('--master-id', type=lambda x: int(x, 0), default=255,
+                        help='Master ID (default: 255)')
+    parser.add_argument('--actuator-type', type=int, default=2, choices=range(7),
+                        help='Actuator type 0-6 (default: 2 for RS02)')
+    parser.add_argument('--kp', type=float, default=200.0,
+                        help='Position proportional gain (default: 200.0)')
+    parser.add_argument('--kd', type=float, default=3.0,
+                        help='Position derivative gain (default: 3.0)')
+    parser.add_argument('--duration', type=float, default=2.0,
+                        help='Movement duration in seconds (default: 2.0)')
+    parser.add_argument('--freq', type=float, default=100.0,
+                        help='Control loop frequency in Hz (default: 100.0)')
+    args = parser.parse_args()
+    
     # プロットスレッドの初期化と開始
     plotter = PlotterThread(max_points=1000, update_interval=50)
     plotter.start()
@@ -139,13 +161,13 @@ def main():
     motor = None
     try:
         motor = RobStrideMotor(
-            can_interface='can0',
-            master_id=0xFF,
-            motor_id=0x7F,
-            actuator_type=ActuatorType.ROBSTRIDE_02,
+            can_interface=args.interface,
+            master_id=args.master_id,
+            motor_id=args.motor_id,
+            actuator_type=ActuatorType(args.actuator_type),
         )
         
-        print(f"Motor initialized: motor_id=0x{motor.motor_id:02X}")
+        print(f"Motor initialized: motor_id={args.motor_id}")
 
         # Enable motor
         print("Enabling motor...")
@@ -161,10 +183,10 @@ def main():
         target_angle = 0.0  # rad (0°に戻す)
         
         # Movement parameters
-        duration = 2.0  # seconds - 目標位置まで移動する時間
-        kp = 200.0  # 位置比例ゲイン (0.0〜500.0)
-        kd = 3.0   # 位置微分ゲイン (0.0〜5.0)
-        control_frequency = 100.0  # Hz - 制御ループの周波数
+        duration = args.duration  # seconds - 目標位置まで移動する時間
+        kp = args.kp  # 位置比例ゲイン (0.0〜500.0)
+        kd = args.kd   # 位置微分ゲイン (0.0〜5.0)
+        control_frequency = args.freq  # Hz - 制御ループの周波数
         dt = 1.0 / control_frequency
         
         # Spin-wait threshold: スリープ残り時間がこの値以下になったらビジーウェイトする

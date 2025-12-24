@@ -36,14 +36,14 @@ def main() -> int:
     parser.add_argument(
         "--motor-id",
         type=lambda x: int(x, 0),
-        default=0x01,
-        help="Motor ID (default: 0x01)",
+        default=1,
+        help="Motor ID (default: 1)",
     )
     parser.add_argument(
         "--master-id",
         type=lambda x: int(x, 0),
-        default=0xFF,
-        help="Master ID (default: 0xFF)",
+        default=255,
+        help="Master ID (default: 255)",
     )
     parser.add_argument(
         "--actuator-type",
@@ -66,7 +66,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    print(f"Connecting to motor ID {args.motor_id:#x} on {args.interface}...")
+    # コマンドライン引数から元の表記を取得
+    import sys
+    motor_id_str = str(args.motor_id)
+    for i, arg in enumerate(sys.argv):
+        if arg == "--motor-id" and i + 1 < len(sys.argv):
+            motor_id_str = sys.argv[i + 1]
+            break
+
+    print(f"Connecting to motor ID {motor_id_str} on {args.interface}...")
 
     try:
         motor = RobStrideMotor(

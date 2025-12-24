@@ -2,22 +2,53 @@
 
 This script shows how to use the RobStride motor library to control a motor
 in various modes including motion control, velocity, position, and current modes.
+
+Usage:
+    uv run examples/basic_control.py
+    uv run examples/basic_control.py --motor-id 1
 """
 
 import time
+import argparse
 
 from robstride_motor import ActuatorType, RobStrideMotor
 
 
 def main() -> None:
     """Main control loop demonstration."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description='Demonstrate basic motor control in various modes'
+    )
+    parser.add_argument('--interface', default='can0', help='CAN interface (default: can0)')
+    parser.add_argument(
+        '--motor-id',
+        type=lambda x: int(x, 0),
+        default=1,
+        help='Motor ID (default: 1)',
+    )
+    parser.add_argument(
+        '--master-id',
+        type=lambda x: int(x, 0),
+        default=255,
+        help='Master ID (default: 255)',
+    )
+    parser.add_argument(
+        '--actuator-type',
+        type=int,
+        default=0,
+        choices=range(7),
+        help='Actuator type 0-6 (default: 0 for RS00)',
+    )
+    args = parser.parse_args()
+    
     # Initialize motor controller
     # Parameters: CAN interface, master ID, motor ID, actuator type
     motor = RobStrideMotor(
-        can_interface="can0",
-        master_id=0xFF,
-        motor_id=0x01,
-        actuator_type=ActuatorType.ROBSTRIDE_00,
+        can_interface=args.interface,
+        master_id=args.master_id,
+        motor_id=args.motor_id,
+        actuator_type=ActuatorType(args.actuator_type),
     )
 
     try:

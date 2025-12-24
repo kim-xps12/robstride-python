@@ -42,6 +42,7 @@ class CommunicationType(IntEnum):
     GET_SINGLE_PARAMETER = 0x11
     SET_SINGLE_PARAMETER = 0x12
     ERROR_FEEDBACK = 0x15
+    SAVE_SETTINGS = 0x16  # 設定の永続化（バージョン0.2.3.0以降）
 
 
 class ActuatorOperation(NamedTuple):
@@ -72,6 +73,18 @@ class ParameterIndex(IntEnum):
     See ref/spec/spec.md for details.
     """
 
+    # System Information (String type, read-only)
+    NAME = 0x0000  # デバイス名
+    BARCODE = 0x0001  # バーコード
+    BOOT_CODE_VERSION = 0x1000  # ブートローダーバージョン
+    BOOT_BUILD_DATE = 0x1001  # ブートローダービルド日
+    BOOT_BUILD_TIME = 0x1002  # ブートローダービルド時刻
+    APP_CODE_VERSION = 0x1003  # ファームウェアバージョン
+    APP_GIT_VERSION = 0x1004  # Gitコミットハッシュ
+    APP_BUILD_DATE = 0x1005  # アプリビルド日
+    APP_BUILD_TIME = 0x1006  # アプリビルド時刻
+    APP_CODE_NAME = 0x1007  # アプリ名
+
     RUN_MODE = 0x7005  # 運転モード: 0=モーション制御, 1=位置PP, 2=速度, 3=電流, 5=位置CSP
     IQ_REF = 0x7006  # 電流ループ制御指令 (A), float, -23~23A
     ID_REF = 0x7007  # D軸電流指令 (A), float
@@ -96,6 +109,7 @@ class ParameterIndex(IntEnum):
     VEL_MAX = 0x7024  # 位置モードPP最大速度 (rad/s), float, default 10
     ACC_SET = 0x7025  # 位置モードPP加速度設定 (rad/s²), float, default 10
     EPSCAN_TIME = 0x7026  # 上報時間設定 (1単位=10ms), uint16, default 1
+    ZERO_STA = 0x7029  # ゼロ点状態フラグ: 0=起動時0~2π, 1=起動時-π~π
 
 
 @dataclass
@@ -128,6 +142,21 @@ class MotorStatus:
     overcurrent: bool
     undervoltage: bool
     device_id: int
+
+
+@dataclass
+class FirmwareInfo:
+    """Firmware version information.
+
+    Contains version and build information read from the motor.
+    """
+
+    boot_version: str  # ブートローダーバージョン (e.g., "0.1.5")
+    app_version: str  # ファームウェアバージョン (e.g., "0.2.3.0")
+    git_version: str  # Gitコミットハッシュ (e.g., "7b844b0fM")
+    build_date: str  # ビルド日 (e.g., "Apr 14 2022")
+    build_time: str  # ビルド時刻 (e.g., "20:30:22")
+    app_name: str  # アプリ名 (e.g., "Lingzu_motor")
 
 
 # Constants from C++ code

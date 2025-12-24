@@ -11,6 +11,7 @@ from robstride_motor.types import (
     ActuatorType,
     CommunicationType,
     ControlMode,
+    FirmwareInfo,
     MotorFeedback,
     ParameterIndex,
 )
@@ -485,7 +486,7 @@ class RobStrideMotor:
 
         self.enable_motor()
 
-    def set_can_id(self, new_id: int) -> None:
+    def set_can_id(self, new_id: int, save: bool = False) -> bool:
         """Change motor CAN ID.
 
         After changing the ID, this instance will automatically update to
@@ -493,14 +494,29 @@ class RobStrideMotor:
 
         Args:
             new_id: New CAN ID for motor (1-127)
-        """
-        self.disable_motor(clear_error=False)
+            save: If True, save the new ID to flash memory (persistent across power cycles)
 
-        data = bytes([0] * 8)
-        self._send_frame(CommunicationType.CAN_ID, (new_id << 8) | self.master_id, data)
+        Returns:
+            True if ID change was successful, False otherwise
+
+        Raises:
+            ValueError: If new_id is out of valid range (1-127)
+        """
+        if not 1 <= new_id <= 127:
+            raise ValueError(f"CAN ID must be between 1 and 127, got {new_id}")
+
+        old_id = self.motor_id
+        self.disable_motor(clear_error=False)
         time.sleep(0.001)
 
-        # Update internal motor ID and reconfigure CAN filter
+        # Send CAN ID change command
+        # Communication type 7: bit16~23 = new CAN ID, bit8~15 = master ID
+        data = bytes([0] * 8)
+        extra_data = (new_id << 8) | self.master_id
+        self._send_frame(CommunicationType.CAN_ID, extra_data, data)
+        time.sleep(0.01)
+
+        # Update internal motor ID and reconfigure CAN filter for new ID
         self.motor_id = new_id
         filters: list[CanFilter] = [
             {
@@ -510,6 +526,125 @@ class RobStrideMotor:
             }
         ]
         self.bus.set_filters(filters)
+
+        # Verify by trying to communicate with new ID
+        time.sleep(0.01)
+        try:
+            # Try to enable motor at new ID to verify
+            self.enable_motor()
+            time.sleep(0.001)
+            self.disable_motor(clear_error=False)
+
+            # Save settings if requested
+            if save:
+                time.sleep(0.001)
+                self.save_settings()
+
+            return True
+        except RuntimeError:
+            # Revert to old ID if communication failed
+            self.motor_id = old_id
+            filters = [
+                {
+                    "can_id": (self.motor_id << 8) | CAN_EFF_FLAG,
+                    "can_mask": 0xFF00 | CAN_EFF_FLAG,
+                    "extended": True,
+                }
+            ]
+            self.bus.set_filters(filters)
+            return False
+
+    def save_settings(self) -> None:
+        """Save current settings to flash memory.
+
+        This persists settings (like CAN ID) across power cycles.
+        Requires firmware version 0.2.3.0 or later.
+
+        Note: After saving, settings will be retained even after power off.
+        """
+        # Communication type 22: Save settings
+        # Data must be: 01 02 03 04 05 06 07 08
+        data = bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
+        self._send_frame(CommunicationType.SAVE_SETTINGS, self.master_id, data)
+        time.sleep(0.1)  # Give time for flash write
+        # Response is motor feedback frame (type 2), handled by _receive_status_frame
+        try:
+            self._receive_status_frame(timeout=1.0)
+        except RuntimeError:
+            pass  # Some firmware versions may not respond
+
+    def get_zero_sta(self) -> int | None:
+        """Get the current zero position flag (zero_sta).
+
+        The zero_sta flag determines the position range at power-on:
+        - 0: Position range is 0 to 2π (default)
+        - 1: Position range is -π to π
+
+        Returns:
+            Current zero_sta value (0 or 1), or None if read failed
+        """
+        # Read zero_sta (0x7029) - uint8 type
+        data_bytes = bytearray(8)
+        data_bytes[0] = ParameterIndex.ZERO_STA & 0xFF
+        data_bytes[1] = (ParameterIndex.ZERO_STA >> 8) & 0xFF
+
+        self._send_frame(CommunicationType.GET_SINGLE_PARAMETER, self.master_id, bytes(data_bytes))
+        time.sleep(0.001)
+
+        result = self._receive_frame(timeout=1.0)
+        if result is None:
+            return None
+
+        communication_type, extra_data, _, data = result
+
+        if communication_type != CommunicationType.GET_SINGLE_PARAMETER:
+            return None
+
+        # Check for read success (bit23~16 == 0x00)
+        read_status = (extra_data >> 8) & 0xFF
+        if read_status != 0x00:
+            return None
+
+        # Extract uint8 value from byte 4
+        return int(data[4])
+
+    def set_zero_sta(self, flag: int, save: bool = True) -> bool:
+        """Set the zero position flag (zero_sta).
+
+        The zero_sta flag determines the position range at power-on:
+        - 0: Position range is 0 to 2π (default)
+        - 1: Position range is -π to π
+
+        This is useful when you want the motor to report positions in
+        a symmetric range around zero (-π to π) instead of (0 to 2π).
+
+        Args:
+            flag: Zero position flag (0 or 1)
+            save: If True, save the setting to flash memory (persistent across power cycles)
+
+        Returns:
+            True if setting was successful, False otherwise
+
+        Raises:
+            ValueError: If flag is not 0 or 1
+        """
+        if flag not in (0, 1):
+            raise ValueError(f"zero_sta must be 0 or 1, got {flag}")
+
+        # Set zero_sta (0x7029) - uint8 type
+        self.set_parameter(ParameterIndex.ZERO_STA, float(flag), is_mode=True)
+        time.sleep(0.001)
+
+        # Verify the setting
+        current_value = self.get_zero_sta()
+
+        if current_value == flag:
+            if save:
+                time.sleep(0.001)
+                self.save_settings()
+            return True
+
+        return False
 
     def read_initial_position(self, timeout: float = 10.0) -> float:
         """Read initial position from motor feedback.
@@ -578,3 +713,147 @@ class RobStrideMotor:
             Motor feedback data
         """
         return MotorFeedback(self.position, self.velocity, self.torque, self.temperature)
+
+    def get_string_parameter(self, index: int) -> str | None:
+        """Get string parameter from motor.
+
+        This method reads string-type parameters such as version info.
+        String parameters are returned as null-terminated ASCII strings in bytes 4-7.
+
+        Args:
+            index: Parameter index (e.g., ParameterIndex.APP_CODE_VERSION)
+
+        Returns:
+            String value, or None if not received
+        """
+        data_bytes = bytearray(8)
+        data_bytes[0] = index & 0xFF
+        data_bytes[1] = (index >> 8) & 0xFF
+
+        self._send_frame(CommunicationType.GET_SINGLE_PARAMETER, self.master_id, bytes(data_bytes))
+        time.sleep(0.001)
+
+        result = self._receive_frame(timeout=1.0)
+        if result is None:
+            return None
+
+        communication_type, extra_data, _, data = result
+
+        if communication_type != CommunicationType.GET_SINGLE_PARAMETER:
+            return None
+
+        # Check for read success (bit23~16 == 0x00)
+        read_status = (extra_data >> 8) & 0xFF
+        if read_status != 0x00:
+            return None
+
+        # Extract string from bytes 4-7 (null-terminated)
+        if len(data) < 8:
+            return None
+
+        # String data is in bytes 4-7, null-terminated
+        string_bytes = data[4:8]
+        # Find null terminator and decode
+        try:
+            null_pos = string_bytes.find(b'\x00')
+            if null_pos >= 0:
+                string_bytes = string_bytes[:null_pos]
+            return string_bytes.decode('ascii').strip()
+        except (UnicodeDecodeError, ValueError):
+            return None
+
+    def get_string_parameter_full(self, index: int, max_chunks: int = 4) -> str | None:
+        """Get full string parameter from motor (supports multi-chunk reading).
+
+        Some string parameters (like version strings) may span multiple reads.
+        This method attempts to read the full string by making multiple requests
+        if needed.
+
+        Args:
+            index: Parameter index (e.g., ParameterIndex.APP_CODE_VERSION)
+            max_chunks: Maximum number of chunks to read (each chunk is 4 bytes)
+
+        Returns:
+            Full string value, or None if not received
+        """
+        result_parts: list[str] = []
+
+        for chunk_offset in range(max_chunks):
+            data_bytes = bytearray(8)
+            # Index with chunk offset for sequential reads
+            chunk_index = index + chunk_offset
+            data_bytes[0] = chunk_index & 0xFF
+            data_bytes[1] = (chunk_index >> 8) & 0xFF
+
+            self._send_frame(
+                CommunicationType.GET_SINGLE_PARAMETER, self.master_id, bytes(data_bytes)
+            )
+            time.sleep(0.002)
+
+            result = self._receive_frame(timeout=1.0)
+            if result is None:
+                break
+
+            communication_type, extra_data, _, data = result
+
+            if communication_type != CommunicationType.GET_SINGLE_PARAMETER:
+                break
+
+            # Check for read success
+            read_status = (extra_data >> 8) & 0xFF
+            if read_status != 0x00:
+                break
+
+            if len(data) < 8:
+                break
+
+            # Extract string chunk from bytes 4-7
+            string_bytes = data[4:8]
+            try:
+                # Check for null terminator
+                null_pos = string_bytes.find(b'\x00')
+                if null_pos >= 0:
+                    if null_pos > 0:
+                        result_parts.append(string_bytes[:null_pos].decode('ascii'))
+                    break
+                result_parts.append(string_bytes.decode('ascii'))
+            except (UnicodeDecodeError, ValueError):
+                break
+
+        if not result_parts:
+            return None
+        return ''.join(result_parts).strip()
+
+    def get_firmware_info(self) -> FirmwareInfo:
+        """Get firmware version information from motor.
+
+        Reads various version-related parameters from the motor including
+        bootloader version, application version, git commit, and build info.
+
+        Note: Version information parameters (0x1000-0x1007) may not be supported
+        by all firmware versions. If not supported, the corresponding fields will
+        contain "unsupported" instead of actual values.
+
+        Returns:
+            FirmwareInfo object containing all version information
+        """
+        boot_version = self.get_string_parameter(ParameterIndex.BOOT_CODE_VERSION) or "unsupported"
+        time.sleep(0.001)
+        app_version = self.get_string_parameter(ParameterIndex.APP_CODE_VERSION) or "unsupported"
+        time.sleep(0.001)
+        git_version = self.get_string_parameter(ParameterIndex.APP_GIT_VERSION) or "unsupported"
+        time.sleep(0.001)
+        build_date = self.get_string_parameter(ParameterIndex.APP_BUILD_DATE) or "unsupported"
+        time.sleep(0.001)
+        build_time = self.get_string_parameter(ParameterIndex.APP_BUILD_TIME) or "unsupported"
+        time.sleep(0.001)
+        app_name = self.get_string_parameter(ParameterIndex.APP_CODE_NAME) or "unsupported"
+
+        return FirmwareInfo(
+            boot_version=boot_version,
+            app_version=app_version,
+            git_version=git_version,
+            build_date=build_date,
+            build_time=build_time,
+            app_name=app_name,
+        )

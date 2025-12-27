@@ -1,11 +1,13 @@
-"""RobStride motor control implementation."""
+"""RobStrideモーター制御の実装."""
 
 import struct
 import time
+from typing import Optional
 
 import can
 from can.typechecking import CanFilter
 
+from robstride_motor.bus import create_can_bus
 from robstride_motor.types import (
     ACTUATOR_OPERATION_MAPPING,
     ActuatorType,
@@ -16,12 +18,12 @@ from robstride_motor.types import (
     ParameterIndex,
 )
 
-# CAN extended frame flag
+# CAN拡張フレームフラグ
 CAN_EFF_FLAG = 0x80000000
 
 
 class RobStrideMotor:
-    """RobStride BLDC motor controller via CAN interface."""
+    """CANインターフェース経由のRobStride BLDCモーターコントローラー."""
 
     def __init__(
         self,
@@ -29,21 +31,30 @@ class RobStrideMotor:
         master_id: int,
         motor_id: int,
         actuator_type: ActuatorType,
+        bus: Optional[can.BusABC] = None,
+        bitrate: int = 1000000,
     ) -> None:
-        """Initialize motor controller.
+        """モーターコントローラーを初期化する.
 
         Args:
-            can_interface: CAN interface name (e.g., 'can0')
-            master_id: Master device ID (typically 0xFF)
-            motor_id: Motor device ID
-            actuator_type: Type of actuator for parameter mapping
+            can_interface: CANインターフェースバックエンド。以下のいずれかを指定:
+                          - 'gs_usb': USB CANアダプタ（例: candleLight）
+                          - 'socketcan': SocketCANインターフェース（Linuxのみ）
+                          - 特定のチャンネル名（例: 'can0'）: レガシーSocketCANモード
+            master_id: マスターデバイスID（通常は0xFF）
+            motor_id: モーターデバイスID
+            actuator_type: パラメータマッピング用のアクチュエータタイプ
+            bus: 事前に初期化されたCANバスオブジェクト。指定された場合、
+                 他のバス初期化パラメータは無視されます。
+            bitrate: CANビットレート（bps）（デフォルト: 1000000）。
         """
         self.can_interface = can_interface
         self.master_id = master_id
         self.motor_id = motor_id
         self.actuator_type = actuator_type
+        self.bitrate = bitrate
 
-        # Motor state
+        # モーター状態
         self.position: float = 0.0
         self.velocity: float = 0.0
         self.torque: float = 0.0
@@ -52,19 +63,38 @@ class RobStrideMotor:
         self.pattern: int = 0
         self.current_mode: int = 0
 
-        # Initialize CAN bus
-        self._init_bus()
+        # CANバスを初期化または受け入れる
+        if bus is not None:
+            self.bus = bus
+            self._owns_bus = False
+        else:
+            self._init_bus()
+            self._owns_bus = True
 
     def _init_bus(self) -> None:
-        """Initialize CAN bus interface."""
-        self.bus = can.interface.Bus(
-            channel=self.can_interface,
-            interface="socketcan",
-            receive_own_messages=False,
-        )
+        """CANバスインターフェースを初期化する.
 
-        # Set up filter to receive only messages from this motor
-        # CAN_EFF_FLAG = 0x80000000 for extended frames
+        can_interface値に基づく3つのモードをサポート:
+        - 'gs_usb': gs_usbバックエンド経由のUSB CANアダプタ
+        - 'socketcan': SocketCANインターフェース（Linux）
+        - その他の値: レガシーSocketCANモード用のチャンネル名として扱われる
+        """
+        if self.can_interface in ("gs_usb", "socketcan"):
+            # 明示的なインターフェースでcreate_can_busを使用
+            self.bus = create_can_bus(
+                interface=self.can_interface,  # type: ignore[arg-type]
+                bitrate=self.bitrate,
+            )
+        else:
+            # レガシーモード: can_interfaceをSocketCANのチャンネル名として扱う
+            self.bus = can.interface.Bus(
+                channel=self.can_interface,
+                interface="socketcan",
+                receive_own_messages=False,
+            )
+
+        # このモーターからのメッセージのみを受信するフィルタを設定
+        # CAN_EFF_FLAG = 0x80000000 は拡張フレーム用
         filters: list[CanFilter] = [
             {
                 "can_id": (self.motor_id << 8) | CAN_EFF_FLAG,
@@ -75,21 +105,21 @@ class RobStrideMotor:
         self.bus.set_filters(filters)
 
     def __del__(self) -> None:
-        """Clean up CAN bus."""
-        if hasattr(self, "bus"):
+        """このインスタンスが所有するCANバスをクリーンアップする."""
+        if hasattr(self, "bus") and hasattr(self, "_owns_bus") and self._owns_bus:
             self.bus.shutdown()
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
-        """Convert float to unsigned integer.
+        """浮動小数点数を符号なし整数に変換する.
 
         Args:
-            x: Value to convert
-            x_min: Minimum value
-            x_max: Maximum value
-            bits: Number of bits for encoding
+            x: 変換する値
+            x_min: 最小値
+            x_max: 最大値
+            bits: エンコード用のビット数
 
         Returns:
-            Encoded unsigned integer value
+            エンコードされた符号なし整数値
         """
         x = max(x_min, min(x_max, x))
         span = x_max - x_min
@@ -97,47 +127,47 @@ class RobStrideMotor:
         return int((offset * ((1 << bits) - 1)) / span)
 
     def _uint_to_float(self, x_int: int, x_min: float, x_max: float, bits: int) -> float:
-        """Convert unsigned integer to float.
+        """符号なし整数を浮動小数点数に変換する.
 
         Args:
-            x_int: Integer value to convert
-            x_min: Minimum value
-            x_max: Maximum value
-            bits: Number of bits for decoding
+            x_int: 変換する整数値
+            x_min: 最小値
+            x_max: 最大値
+            bits: デコード用のビット数
 
         Returns:
-            Decoded float value
+            デコードされた浮動小数点値
         """
         span = x_max - x_min
         return float(x_int) * span / ((1 << bits) - 1) + x_min
 
     def _bytes_to_float(self, data: bytes) -> float:
-        """Convert 4 bytes to float (little endian from bytes 4-7).
+        """4バイトを浮動小数点数に変換する（バイト4-7からリトルエンディアン）.
 
-        This matches the C++ implementation:
+        C++実装と一致:
             uint32_t data = bytedata[7]<<24|bytedata[6]<<16|bytedata[5]<<8|bytedata[4];
 
         Args:
-            data: Byte data (at least 8 bytes)
+            data: バイトデータ（最低8バイト）
 
         Returns:
-            Float value
+            浮動小数点値
         """
         if len(data) < 8:
             return 0.0
-        # Bytes 4-7 contain float in little endian (matching C++ Byte_to_float)
+        # バイト4-7にリトルエンディアン形式でfloatが格納（C++ Byte_to_floatと一致）
         result: float = struct.unpack("<f", data[4:8])[0]
         return result
 
     def _send_frame(self, communication_type: int, extra_data: int, data: bytes) -> None:
-        """Send CAN frame to motor.
+        """モーターにCANフレームを送信する.
 
         Args:
-            communication_type: Type of communication (5 bits)
-            extra_data: Extra data field (16 bits)
-            data: Payload data (8 bytes)
+            communication_type: 通信タイプ（5ビット）
+            extra_data: 追加データフィールド（16ビット）
+            data: ペイロードデータ（8バイト）
         """
-        # Construct 29-bit extended CAN ID
+        # 29ビット拡張CAN IDを構築
         can_id = (
             (communication_type & 0x1F) << 24 | (extra_data & 0xFFFF) << 8 | (self.motor_id & 0xFF)
         )
@@ -150,13 +180,13 @@ class RobStrideMotor:
         self.bus.send(msg)
 
     def _receive_frame(self, timeout: float = 0.0) -> tuple[int, int, int, bytes] | None:
-        """Receive CAN frame from motor.
+        """モーターからCANフレームを受信する.
 
         Args:
-            timeout: Receive timeout in seconds (0 = non-blocking)
+            timeout: 受信タイムアウト（秒）（0 = ノンブロッキング）
 
         Returns:
-            Tuple of (communication_type, extra_data, host_id, data) or None
+            (communication_type, extra_data, host_id, data)のタプル、またはNone
         """
         msg = self.bus.recv(timeout=timeout if timeout > 0 else None)
 
@@ -178,14 +208,14 @@ class RobStrideMotor:
         return communication_type, extra_data, host_id, bytes(msg.data)
 
     def _receive_status_frame(self, timeout: float = 1.0) -> tuple[int, float] | None:
-        """Receive and parse motor status frame.
+        """モーター状態フレームを受信して解析する.
 
         Args:
-            timeout: Receive timeout in seconds
+            timeout: 受信タイムアウト（秒）
 
         Returns:
-            For parameter responses: tuple of (index, value)
-            For other frames: None
+            パラメータ応答の場合: (index, value)のタプル
+            その他のフレームの場合: None
         """
         result = self._receive_frame(timeout=timeout)
         if result is None:
@@ -194,7 +224,7 @@ class RobStrideMotor:
         communication_type, extra_data, _, data = result
 
         if communication_type == CommunicationType.MOTOR_REQUEST:
-            # Parse feedback data (big endian)
+            # フィードバックデータを解析（ビッグエンディアン）
             if len(data) < 8:
                 raise RuntimeError("Data size too small")
 
@@ -212,7 +242,7 @@ class RobStrideMotor:
             return None
 
         elif communication_type == CommunicationType.GET_SINGLE_PARAMETER:
-            # Parse parameter response
+            # パラメータ応答を解析
             index = (data[1] << 8) | data[0]
             if index == ParameterIndex.RUN_MODE:
                 value = float(data[4])
@@ -224,10 +254,10 @@ class RobStrideMotor:
         return None
 
     def enable_motor(self) -> MotorFeedback:
-        """Enable motor.
+        """モーターを有効化する.
 
         Returns:
-            Motor feedback data
+            モーターフィードバックデータ
         """
         data = bytes([0] * 8)
         self._send_frame(CommunicationType.MOTOR_ENABLE, self.master_id, data)
@@ -241,10 +271,10 @@ class RobStrideMotor:
         return MotorFeedback(self.position, self.velocity, self.torque, self.temperature)
 
     def disable_motor(self, clear_error: bool = False) -> None:
-        """Disable motor.
+        """モーターを停止する.
 
         Args:
-            clear_error: Whether to clear error flags
+            clear_error: エラーフラグをクリアするかどうか
         """
         data = bytes([1 if clear_error else 0] + [0] * 7)
         self._send_frame(CommunicationType.MOTOR_STOP, self.master_id, data)
@@ -252,12 +282,12 @@ class RobStrideMotor:
         self._receive_status_frame()
 
     def set_parameter(self, index: int, value: float, is_mode: bool = False) -> None:
-        """Set single parameter.
+        """単一パラメータを設定する.
 
         Args:
-            index: Parameter index
-            value: Parameter value
-            is_mode: If True, treat as mode setting (uint8)
+            index: パラメータインデックス
+            value: パラメータ値
+            is_mode: Trueの場合、モード設定として扱う（uint8）
         """
         data_bytes = bytearray(8)
         data_bytes[0] = index & 0xFF
@@ -275,13 +305,13 @@ class RobStrideMotor:
         self._receive_status_frame()
 
     def get_parameter(self, index: int) -> float | None:
-        """Get single parameter.
+        """単一パラメータを取得する.
 
         Args:
-            index: Parameter index
+            index: パラメータインデックス
 
         Returns:
-            Parameter value, or None if not received
+            パラメータ値、または受信できなかった場合はNone
         """
         data_bytes = bytearray(8)
         data_bytes[0] = index & 0xFF
@@ -296,13 +326,13 @@ class RobStrideMotor:
         return None
 
     def _switch_mode(self, target_mode: ControlMode, auto_enable: bool = True) -> None:
-        """Switch control mode if necessary.
+        """必要に応じて制御モードを切り替える.
 
         Args:
-            target_mode: Target control mode
-            auto_enable: If True, enable motor after mode switch
+            target_mode: ターゲット制御モード
+            auto_enable: Trueの場合、モード切り替え後にモーターを有効化する
         """
-        # Always check and switch mode if needed
+        # 必要に応じてモードをチェックして切り替える
         if self.current_mode != target_mode:
             self.disable_motor(clear_error=False)
             time.sleep(0.001)
@@ -322,19 +352,19 @@ class RobStrideMotor:
         kp: float = 0.5,
         kd: float = 0.1,
     ) -> MotorFeedback:
-        """Send motion control command (Mode 0).
+        """モーション制御コマンドを送信する（モード0）.
 
         Args:
-            torque: Target torque (Nm)
-            position: Target position (rad)
-            velocity: Target velocity (rad/s)
-            kp: Position proportional gain
-            kd: Position derivative gain
+            torque: 目標トルク (Nm)
+            position: 目標位置 (rad)
+            velocity: 目標速度 (rad/s)
+            kp: 位置比例ゲイン
+            kd: 位置微分ゲイン
 
         Returns:
-            Motor feedback data
+            モーターフィードバックデータ
         """
-        # _switch_mode already checks pattern == 2 (matching C++ implementation)
+        # _switch_modeは既にpattern == 2をチェック済み（C++実装と一致）
         self._switch_mode(ControlMode.MOTION_CONTROL, auto_enable=True)
 
         op_params = ACTUATOR_OPERATION_MAPPING[self.actuator_type]
@@ -365,9 +395,9 @@ class RobStrideMotor:
     def send_velocity_command(
         self, velocity: float, limit_cur: float = 23.0, acceleration: float = 20.0
     ) -> MotorFeedback:
-        """Send velocity control command (Mode 2).
+        """速度制御コマンドを送信する（モード2）.
 
-        Per official spec, velocity mode requires:
+        公式仕様によれば、速度モードには以下が必要:
         - Setting run_mode to 2 (velocity mode)
         - Setting limit_cur (0x7018) for current limit
         - Setting spd_ref (0x700A) for velocity command

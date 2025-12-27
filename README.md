@@ -13,10 +13,12 @@ RobStride RS02モーターをCANバス経由で制御するためのPython実装
 
 ## Environment
 
-- OS: Ubuntu24.04
-    - SocketCANインターフェース (Linux)
-- CANアダプタ: DSD TECH SH-C30G
-    - Amazon: https://amzn.asia/d/4n2BXfD
+- OS:
+    - Linux: Ubuntu 24.04（SocketCANインターフェース）
+    - macOS: macOS 10.15（gs_usb経由のUSB CANアダプタ）
+- CANアダプタ:
+    - Linux: DSD TECH SH-C30G（Amazon: https://amzn.asia/d/4n2BXfD）
+        - VID:0x1D50, PID:0x606F
 - Python 3.11以上
 - uvパッケージマネージャ
 
@@ -37,6 +39,8 @@ uv sync
 
 ## Setup CAN Interface
 
+### Linux (SocketCAN)
+
 ライブラリを使用する前に，CANインターフェースが適切に設定されていることを確認してください：
 
 ```bash
@@ -46,6 +50,57 @@ sudo ip link set up can0 type can bitrate 1000000
 # インターフェースが起動していることを確認
 ip link show can0
 ```
+
+### macOS (gs_usb)
+
+macOSではUSB CANアダプタを使用します：
+
+```bash
+# USB CANアダプタを接続
+# candleLight互換デバイス（VID:0x1D50, PID:0x606F）が必要
+
+# macOSではroot権限が必要な場合があります
+sudo uv run examples/cross_platform_example.py
+```
+
+### CANインターフェースの指定方法（コード例）
+
+`RobStrideMotor`クラスの`can_interface`パラメータでCANバックエンドを指定します：
+
+```python
+from robstride_motor import RobStrideMotor, ActuatorType
+
+# macOS: gs_usbバックエンドを使用
+motor = RobStrideMotor(
+    can_interface="gs_usb",  # gs_usbを指定
+    master_id=0xFF,
+    motor_id=127,
+    actuator_type=ActuatorType.ROBSTRIDE_02,
+    bitrate=1000000,
+)
+
+# Linux: socketcanバックエンドを使用
+motor = RobStrideMotor(
+    can_interface="socketcan",  # socketcanを指定
+    master_id=0xFF,
+    motor_id=127,
+    actuator_type=ActuatorType.ROBSTRIDE_02,
+    bitrate=1000000,  # 注: SocketCANでは事前に`ip link`で設定が必要
+)
+
+# レガシーモード: チャンネル名を直接指定（SocketCANのみ）
+motor = RobStrideMotor(
+    can_interface="can0",  # チャンネル名を指定（自動的にsocketcanを使用）
+    master_id=0xFF,
+    motor_id=127,
+    actuator_type=ActuatorType.ROBSTRIDE_02,
+)
+```
+
+注意:
+- `can_interface`に`"gs_usb"`または`"socketcan"`を指定すると、ライブラリの`create_can_bus()`関数を使用してバスを初期化します
+- それ以外の値（例: `"can0"`, `"can1"`）を指定すると、レガシーモードとしてSocketCANのチャンネル名として扱われます
+- SocketCANを使用する場合、事前に`sudo ip link set up can0 type can bitrate 1000000`でインターフェースを有効化する必要があります
 
 ## How to use (example code)
 

@@ -4,11 +4,16 @@
 位置制御モード（PP）で移動させます。
 
 使用方法:
-    uv run examples/move_to_zero_pp.py
-    uv run examples/move_to_zero_pp.py --motor-id 1
+    # gs_usb (USB CANアダプタ、macOS/Linux)
+    sudo uv run examples/move_to_zero_pp.py --interface gs_usb
+
+    # socketcan (Linux)
+    uv run examples/move_to_zero_pp.py --interface socketcan
+
+    # チャンネル名直接指定 (socketcan)
+    uv run examples/move_to_zero_pp.py --interface can0
 
 注意:
-    - CANインターフェース（can0）が有効化されている必要があります
     - モーターIDはデフォルトで127に設定されています
 """
 
@@ -24,7 +29,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='Move motor to zero position using PP mode'
     )
-    parser.add_argument('--interface', default='can0', help='CAN interface (default: can0)')
+    parser.add_argument(
+        '--interface',
+        required=True,
+        help="CAN interface: 'gs_usb', 'socketcan', or channel name (e.g., 'can0')",
+    )
     parser.add_argument(
         '--motor-id',
         type=lambda x: int(x, 0),
@@ -125,6 +134,11 @@ def main() -> None:
         # 終了時は必ずモーターを無効化
         print("\nモーターを無効化中...")
         motor.disable_motor()
+
+        # CANバスを明示的にシャットダウン（gs_usbでは重要）
+        if hasattr(motor, 'bus') and hasattr(motor, '_owns_bus') and motor._owns_bus:
+            from robstride_motor.bus import shutdown_can_bus
+            shutdown_can_bus(motor.bus, motor.can_interface)
         print("完了")
 
 

@@ -7,7 +7,7 @@ from typing import Optional
 import can
 from can.typechecking import CanFilter
 
-from robstride_motor.bus import create_can_bus
+from robstride_motor.bus import create_can_bus, shutdown_can_bus
 from robstride_motor.types import (
     ACTUATOR_OPERATION_MAPPING,
     ActuatorType,
@@ -94,20 +94,46 @@ class RobStrideMotor:
             )
 
         # このモーターからのメッセージのみを受信するフィルタを設定
-        # CAN_EFF_FLAG = 0x80000000 は拡張フレーム用
-        filters: list[CanFilter] = [
-            {
-                "can_id": (self.motor_id << 8) | CAN_EFF_FLAG,
-                "can_mask": 0xFF00 | CAN_EFF_FLAG,
-                "extended": True,
-            }
-        ]
-        self.bus.set_filters(filters)
+        # 注: gs_usbバックエンドではハードウェアフィルタが正しく動作しないため、
+        #     socketcanの場合のみフィルタを設定する
+        if self.can_interface != "gs_usb":
+            # CAN_EFF_FLAG = 0x80000000 は拡張フレーム用
+            filters: list[CanFilter] = [
+                {
+                    "can_id": (self.motor_id << 8) | CAN_EFF_FLAG,
+                    "can_mask": 0xFF00 | CAN_EFF_FLAG,
+                    "extended": True,
+                }
+            ]
+            self.bus.set_filters(filters)
 
     def __del__(self) -> None:
         """このインスタンスが所有するCANバスをクリーンアップする."""
+        self.close()
+
+    def __enter__(self) -> "RobStrideMotor":
+        """コンテキストマネージャーのエントリポイント."""
+        return self
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        """コンテキストマネージャーの終了処理."""
+        self.close()
+
+    def close(self) -> None:
+        """CANバスをシャットダウンし、リソースを解放する.
+
+        このメソッドを明示的に呼び出すか、withステートメントを使用して
+        リソースを適切にクリーンアップしてください。
+        gs_usbバックエンドでは、これを呼び出さないとUSBデバイスが
+        正しく解放されず、次回の接続で問題が発生する可能性があります。
+
+        注意: このメソッドはモーターを無効化しません。トルクを解放するには
+        事前に disable_motor() を明示的に呼び出してください。
+        """
         if hasattr(self, "bus") and hasattr(self, "_owns_bus") and self._owns_bus:
-            self.bus.shutdown()
+            if self.bus is not None:
+                shutdown_can_bus(self.bus, self.can_interface)
+                self._owns_bus = False  # 二重クローズを防止
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """浮動小数点数を符号なし整数に変換する.
